@@ -1,0 +1,7 @@
+src/redis-server		/usr/bin
+src/redis-benchmark		/usr/bin
+debian/redis.conf	/etc/redis
+src/redis-cli		/usr/bin
+src/redis-check-aof	/usr/bin
+src/redis-check-dump	/usr/bin
+debian/bash_completion.d	/etc

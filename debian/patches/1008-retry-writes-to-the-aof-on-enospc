@@ -1,0 +1,201 @@
+From 274985f2b9ffcee640ef7c2f37e366a8168fb431 Mon Sep 17 00:00:00 2001
+From: Saj Goonatilleke <sg@redu.cx>
+Date: Mon, 16 Jul 2012 16:30:11 +1000
+Subject: [PATCH 1008/1010] Retry writes to the AOF on ENOSPC
+
+Copying in Matt's complaint:
+
+    At present, if a write to the AOF fails due to ENOSPC, Redis will
+    die horribly, leaving a corrupted AOF and a ridiculously lengthy
+    reload (which will fail without manual intervention, due to the
+    corrupted AOF).
+
+    This is fucking stupid.  It would be only moderately stupid, except
+    that when the AOF gets big, it gets rewritten, which consumes a
+    *massive* amount of diskspace very quickly, increasing the chances
+    of a disk full condition.  Yes, we should be throwing insane amounts
+    of diskspace at Redis, but whenever we get it wrong, the world comes
+    to an end because Redis can't deal with an error gracefully.
+
+    What I'd like to do is work out a way of making Redis fail more
+    gracefully in the event of a disk full condition.  My current best
+    idea is to check if an AOF rewrite is in progress when a write to
+    the main AOF fails with ENOSPC, and if one is in progress, kill it
+    off (to clear the space) and then write the AOF again.  It's not
+    optimal that the rewrite fails, because the ever-growing AOF *will*
+    eventually fill the disk, but I'd prefer having to do a manual,
+    controlled shutdown/failover/turning-off-of-AOF in a manner
+    convenient to us, over the current "fuck me Redis just went down"
+    situation we currently land in.
+---
+ src/aof.c   | 73 ++++++++++++++++++++++++++++++++++++++++++++++---------------
+ src/redis.c | 31 +++++++++++++++-----------
+ src/redis.h |  1 +
+ 3 files changed, 74 insertions(+), 31 deletions(-)
+
+diff --git a/src/aof.c b/src/aof.c
+index 93765f0..dd9ace4 100644
+--- a/src/aof.c
++++ b/src/aof.c
+@@ -199,6 +199,7 @@ int startAppendOnly(void) {
+  * fsync. */
+ void flushAppendOnlyFile(int force) {
+     ssize_t nwritten;
++    time_t since_last_write = 0;
+     int sync_in_progress = 0;
+ 
+     if (sdslen(server.aof_buf) == 0) return;
+@@ -238,35 +239,71 @@ void flushAppendOnlyFile(int force) {
+      * or alike */
+     nwritten = write(server.aof_fd,server.aof_buf,sdslen(server.aof_buf));
+     if (nwritten != (signed)sdslen(server.aof_buf)) {
+-        /* Ooops, we are in troubles. The best thing to do for now is
+-         * aborting instead of giving the illusion that everything is
+-         * working as expected. */
+-        if (nwritten == -1) {
+-            redisLog(REDIS_WARNING,"Exiting on error writing to the append-only file: %s",strerror(errno));
+-        } else {
+-            redisLog(REDIS_WARNING,"Exiting on short write while writing to "
+-                                   "the append-only file: %s (nwritten=%ld, "
+-                                   "expected=%ld)",
+-                                   strerror(errno),
+-                                   (long)nwritten,
+-                                   (long)sdslen(server.aof_buf));
+ 
++        /* Only part of the buffer was written out.  The append-only 
++         * file is in an inconsistent, unusable state.  Fix it. */
++        if (nwritten != -1) {
+             if (!ftruncate(server.aof_fd, server.aof_current_size)) {
+                 if (lseek(server.aof_fd, 0, SEEK_END) == -1) {
+-                    redisLog(REDIS_WARNING, "Exiting on bad lseek: %s",
+-                             strerror(errno));
++                    redisLog(REDIS_WARNING, "Exiting on error removing "
++                             "short write from the append-only file.  "
++                             "lseek: %s", strerror(errno));
+                     exit(1);
+                 }
+             } else {
+-                redisLog(REDIS_WARNING, "Could not remove short write "
+-                         "from the append-only file.  Redis may refuse "
+-                         "to load the AOF the next time it starts.  "
+-                         "ftruncate: %s", strerror(errno));
++                redisLog(REDIS_WARNING, "Exiting on error removing "
++                         "short write from the append-only file.  "
++                         "Redis may refuse to load the AOF the next "
++                         "time it starts.  ftruncate: %s",
++                         strerror(errno));
++                exit(1);
++            }
++        }
++
++        /* The situation may be recoverable if (Boolean AND):
++         *
++         *     1) We aren't in a 'strict' fsync() mode
++         *
++         *     2) Our write() failed because we ran out of disk space
++         *
++         *     3) We have a child doing a background AOF rewrite
++         *        (probably to the same filesystem)
++         *
++         * When our child dies (because its write() also failed), it 
++         * might free up enough disk capacity for our write() to 
++         * succeed.  Try again in a little while. */
++        if (server.aof_fsync != AOF_FSYNC_ALWAYS) {
++            if (errno == ENOSPC && server.aof_child_pid != -1) {
++                /* Guarantee that we won't sit about with an unwritten 
++                 * buffer for an unacceptably long time. */
++                since_last_write = server.unixtime - server.aof_last_write;
++                switch (server.aof_fsync) {
++                    case AOF_FSYNC_EVERYSEC:
++                        if (since_last_write < 2)
++                            return;
++                    case AOF_FSYNC_NO:
++                        if (since_last_write < 30)
++                            return;
++                }
+             }
+         }
++
++        /* Ooops, we are in troubles. The best thing to do for now is
++         * aborting instead of giving the illusion that everything is
++         * working as expected. */
++        if (nwritten == -1) {
++            redisLog(REDIS_WARNING, "Exiting on error writing to the "
++                     "append-only file: %s", strerror(errno));
++        } else {
++            redisLog(REDIS_WARNING, "Exiting on error writing to the "
++                     "append-only file (short write): %s "
++                     "(nwritten=%ld, expected=%ld)", strerror(errno),
++                     (long)nwritten, (long)sdslen(server.aof_buf));
++        }
+         exit(1);
+     }
+     server.aof_current_size += nwritten;
++    server.aof_last_write = server.unixtime;
+ 
+     /* Re-use AOF buffer when it is small enough. The maximum comes from the
+      * arena size of 4k minus some overhead (but is otherwise arbitrary). */
+diff --git a/src/redis.c b/src/redis.c
+index 60b5f01..db9d659 100644
+--- a/src/redis.c
++++ b/src/redis.c
+@@ -931,19 +931,23 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
+             }
+          }
+ 
+-         /* Trigger an AOF rewrite if needed */
+-         if (server.rdb_child_pid == -1 &&
+-             server.aof_child_pid == -1 &&
+-             server.aof_rewrite_perc &&
+-             server.aof_current_size > server.aof_rewrite_min_size)
+-         {
+-            long long base = server.aof_rewrite_base_size ?
+-                            server.aof_rewrite_base_size : 1;
+-            long long growth = (server.aof_current_size*100/base) - 100;
+-            if (growth >= server.aof_rewrite_perc) {
+-                redisLog(REDIS_NOTICE,"Starting automatic rewriting of AOF on %lld%% growth",growth);
+-                rewriteAppendOnlyFileBackground();
+-            }
++         /* Trigger an AOF rewrite if needed.  Don't spam it in case of 
++          * an underlying environmental problem that kills the rewrite 
++          * part way through. */
++         run_with_period(10000) {
++             if (server.rdb_child_pid == -1 &&
++                 server.aof_child_pid == -1 &&
++                 server.aof_rewrite_perc &&
++                 server.aof_current_size > server.aof_rewrite_min_size)
++             {
++                long long base = server.aof_rewrite_base_size ?
++                                server.aof_rewrite_base_size : 1;
++                long long growth = (server.aof_current_size*100/base) - 100;
++                if (growth >= server.aof_rewrite_perc) {
++                    redisLog(REDIS_NOTICE,"Starting automatic rewriting of AOF on %lld%% growth",growth);
++                    rewriteAppendOnlyFileBackground();
++                }
++             }
+          }
+     }
+ 
+@@ -1094,6 +1098,7 @@ void initServerConfig() {
+     server.aof_rewrite_min_size = REDIS_AOF_REWRITE_MIN_SIZE;
+     server.aof_rewrite_base_size = 0;
+     server.aof_rewrite_scheduled = 0;
++    server.aof_last_write = time(NULL);
+     server.aof_last_fsync = time(NULL);
+     server.aof_rewrite_time_last = -1;
+     server.aof_rewrite_time_start = -1;
+diff --git a/src/redis.h b/src/redis.h
+index 997831e..498e461 100644
+--- a/src/redis.h
++++ b/src/redis.h
+@@ -510,6 +510,7 @@ struct redisServer {
+     int aof_fd;       /* File descriptor of currently selected AOF file */
+     int aof_selected_db; /* Currently selected DB in AOF */
+     time_t aof_flush_postponed_start; /* UNIX time of postponed AOF flush */
++    time_t aof_last_write;          /* UNIX time of last successful AOF write() */
+     time_t aof_last_fsync;            /* UNIX time of last fsync() */
+     time_t aof_rewrite_time_last;   /* Time used by last AOF rewrite run. */
+     time_t aof_rewrite_time_start;  /* Current AOF rewrite start time. */
+-- 
+1.7.11.1
+

@@ -1,0 +1,71 @@
+From 60e97c51514711b7d34281d5647ff8a93f515521 Mon Sep 17 00:00:00 2001
+From: Matt Palmer <mpalmer@hezmatt.org>
+Date: Mon, 28 May 2012 18:33:24 +1000
+Subject: [PATCH 1000/1010] Patch to allow 'config set bind' to work
+
+Matt's patch, with some minor modifications.  Allows your Redis to
+hot-bind to another IP address.
+---
+ src/config.c | 39 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 39 insertions(+)
+
+diff --git a/src/config.c b/src/config.c
+index c2ea5b7..9765d29 100644
+--- a/src/config.c
++++ b/src/config.c
+@@ -643,6 +643,39 @@ void configSetCommand(redisClient *c) {
+ 
+         if (yn == -1) goto badfmt;
+         server.rdb_checksum = yn;
++    } else if (!strcasecmp(c->argv[2]->ptr,"bind")) {
++        int newfd = -1;
++        int closeold = 0;
++        /*
++         * Support unbinding from an IP address with config set bind ""
++         */
++        if (((char *)o->ptr)[0] != '\0') {
++            redisLog(REDIS_NOTICE, "Got a request to re-bind to '%s'", o->ptr);
++            newfd = anetTcpServer(server.neterr, server.port, o->ptr);
++            if (newfd == ANET_ERR) {
++                addReplyErrorFormat(c,"Failed to re-bind: %s",
++                                    (char*)server.neterr);
++            } else {
++                if (aeCreateFileEvent(server.el, newfd, AE_READABLE,
++                                      acceptTcpHandler, NULL) == AE_ERR) {
++                    addReplyErrorFormat(c, "Bad accept on fd: %d", newfd);
++                } else {
++                    closeold = 1;
++                }
++            }
++        } else {
++            redisLog(REDIS_NOTICE, "Got a request to unbind from '%s'",
++                     server.bindaddr);
++            closeold = 1;
++        }
++        if (closeold) {
++            aeDeleteFileEvent(server.el, server.ipfd, AE_READABLE);
++            close(server.ipfd);
++            server.ipfd = newfd;
++            zfree(server.bindaddr);
++            server.bindaddr = zstrdup(o->ptr);
++            redisLog(REDIS_NOTICE, "Rebound to '%s'", o->ptr);
++        }
+     } else {
+         addReplyErrorFormat(c,"Unsupported CONFIG parameter: %s",
+             (char*)c->argv[2]->ptr);
+@@ -860,6 +893,12 @@ void configGetCommand(redisClient *c) {
+         addReplyBulkCString(c,buf);
+         matches++;
+     }
++    if (stringmatch(pattern,"bind",0)) {
++        redisLog(REDIS_VERBOSE,"CONFIG GET bind");
++        addReplyBulkCString(c,"bind");
++        addReplyBulkCString(c,server.bindaddr);
++        matches++;
++    }
+     setDeferredMultiBulkLength(c,replylen,matches*2);
+ }
+ 
+-- 
+1.7.11.1
+

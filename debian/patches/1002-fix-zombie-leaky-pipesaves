@@ -1,0 +1,58 @@
+From 1fc5f8bda742ede31e2a1812070241af1e938ca0 Mon Sep 17 00:00:00 2001
+From: Saj Goonatilleke <sg@redu.cx>
+Date: Wed, 6 Jun 2012 16:43:53 +1000
+Subject: [PATCH 1002/1010] Fix zombie-leaky PIPESAVEs
+
+I have chosen to make Redis treat these children as it would treat a
+child forked to BGSAVE.  This simplifies the code (rdb_child_pid is
+already checked where it matters), but means you can't run a BGSAVE and
+PIPESAVE concurrently.
+---
+ src/rdb.c | 13 +++++++------
+ 1 file changed, 7 insertions(+), 6 deletions(-)
+
+diff --git a/src/rdb.c b/src/rdb.c
+index be0792b..0e8c60f 100644
+--- a/src/rdb.c
++++ b/src/rdb.c
+@@ -753,23 +753,23 @@ int rdbPipesaveBackground(char *command) {
+     pid_t childpid;
+     char *pipecommand;
+ 
++    if (server.rdb_child_pid != -1) return REDIS_ERR;
++
+     if (!command || strlen(command) < 1) {
+         redisLog(REDIS_WARNING,"Cannot PIPESAVE without a configured pipesavecommand");
+         return REDIS_ERR;
+     }
+ 
+     if ((childpid = fork()) == 0) {
++        int retval;
++
+         /* Child */
+         if (server.ipfd > 0) close(server.ipfd);
+         if (server.sofd > 0) close(server.sofd);
+         pipecommand = zmalloc(strlen(command) + 2);
+         snprintf(pipecommand, strlen(command) + 2, "|%s", command);
+-
+-        if (rdbSave(pipecommand) == REDIS_OK) {
+-            _exit(0);
+-        } else {
+-            _exit(1);
+-        }
++        retval = rdbSave(pipecommand);
++        exitFromChild((retval == REDIS_OK) ? 0 : 1);
+     } else {
+         /* Parent */
+         if (childpid == -1) {
+@@ -778,6 +778,7 @@ int rdbPipesaveBackground(char *command) {
+             return REDIS_ERR;
+         }
+         redisLog(REDIS_NOTICE,"Background pipesave started by pid %d",childpid);
++        server.rdb_child_pid = childpid;
+         updateDictResizePolicy();
+         return REDIS_OK;
+     }
+-- 
+1.7.11.1
+

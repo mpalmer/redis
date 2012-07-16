@@ -1,0 +1,2 @@
+version=3
+http://redis.io/download http://redis.googlecode.com/files/redis-(.*).tar.gz

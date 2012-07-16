@@ -1,0 +1,39 @@
+From 2c462e19a1591ee66c8a397c5da451fd536d40a5 Mon Sep 17 00:00:00 2001
+From: Saj Goonatilleke <sg@redu.cx>
+Date: Mon, 16 Jul 2012 15:33:25 +1000
+Subject: [PATCH 1007/1010] Truncate short write from the AOF
+
+If Redis only manages to write out a partial buffer, the AOF file won't
+load back into Redis the next time it starts up.  It is better to
+discard the short write than waste time running redis-check-aof.
+---
+ src/aof.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/src/aof.c b/src/aof.c
+index 09bfb04..93765f0 100644
+--- a/src/aof.c
++++ b/src/aof.c
+@@ -250,6 +250,19 @@ void flushAppendOnlyFile(int force) {
+                                    strerror(errno),
+                                    (long)nwritten,
+                                    (long)sdslen(server.aof_buf));
++
++            if (!ftruncate(server.aof_fd, server.aof_current_size)) {
++                if (lseek(server.aof_fd, 0, SEEK_END) == -1) {
++                    redisLog(REDIS_WARNING, "Exiting on bad lseek: %s",
++                             strerror(errno));
++                    exit(1);
++                }
++            } else {
++                redisLog(REDIS_WARNING, "Could not remove short write "
++                         "from the append-only file.  Redis may refuse "
++                         "to load the AOF the next time it starts.  "
++                         "ftruncate: %s", strerror(errno));
++            }
+         }
+         exit(1);
+     }
+-- 
+1.7.11.1
+

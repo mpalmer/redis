@@ -1,0 +1,17 @@
+# Description: Fix FTBFS on kfreebsd
+# Bug: https://github.com/antirez/redis/pull/67
+# Bug-Debian: http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=632499
+# Author: Christoph Egger <christoph@debian.org>
+
+diff -urNad /tmp/bp-build/redis-2.2.11.orig/src/fmacros.h /tmp/bp-build/redis-2.2.11/src/fmacros.h
+--- redis-2.2.11.orig/src/fmacros.h	2011-07-06 22:27:10.888337815 +0100
++++ redis-2.2.11/src/fmacros.h	2011-07-06 22:27:30.836040865 +0100
+@@ -3,7 +3,7 @@
+ 
+ #define _BSD_SOURCE
+ 
+-#if defined(__linux__) || defined(__OpenBSD__)
++#if defined(__linux__) || defined(__OpenBSD__) || defined(__GLIBC__)
+ #define _XOPEN_SOURCE 700
+ #else
+ #define _XOPEN_SOURCE

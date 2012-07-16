@@ -1,0 +1,54 @@
+From e18cdd89dcd4f6096d3feb22c721ca423aa2b93d Mon Sep 17 00:00:00 2001
+From: Saj Goonatilleke <sg@redu.cx>
+Date: Tue, 17 Jul 2012 18:30:48 +1000
+Subject: [PATCH 1010/1010] Short writes will not set errno
+
+---
+ src/aof.c | 16 +++++++++++-----
+ 1 file changed, 11 insertions(+), 5 deletions(-)
+
+diff --git a/src/aof.c b/src/aof.c
+index 4aa1387..e082dec 100644
+--- a/src/aof.c
++++ b/src/aof.c
+@@ -262,7 +262,7 @@ void flushAppendOnlyFile(int force) {
+ 
+         /* The situation may be recoverable if (Boolean AND):
+          *
+-         *     1) We aren't in a 'strict' fsync() mode
++         *     1) We are in a 'loose' fsync() mode
+          *
+          *     2) Our write() failed because we ran out of disk space
+          *
+@@ -271,9 +271,15 @@ void flushAppendOnlyFile(int force) {
+          *
+          * When our child dies (because its write() also failed), it 
+          * might free up enough disk capacity for our write() to 
+-         * succeed.  Try again in a little while. */
++         * succeed.  Try again in a little while.
++         *
++         * write() won't tell us *why* it failed to write our complete 
++         * buffer if it manages at least one byte.  We have to guess. */
+         if (server.aof_fsync != AOF_FSYNC_ALWAYS) {
+-            if (errno == ENOSPC && server.aof_child_pid != -1) {
++            if ((nwritten == -1 && errno == ENOSPC
++                                && server.aof_child_pid != -1)
++                || (nwritten != -1 && server.aof_child_pid != -1)) {
++
+                 /* Guarantee that we won't sit about with an unwritten 
+                  * buffer for an unacceptably long time. */
+                 since_last_write = server.unixtime - server.aof_last_write;
+@@ -296,8 +302,8 @@ void flushAppendOnlyFile(int force) {
+                      "append-only file: %s", strerror(errno));
+         } else {
+             redisLog(REDIS_WARNING, "Exiting on error writing to the "
+-                     "append-only file (short write): %s "
+-                     "(nwritten=%ld, expected=%ld)", strerror(errno),
++                     "append-only file (short write): "
++                     "nwritten=%ld, expected=%ld.  Is the disk full?",
+                      (long)nwritten, (long)sdslen(server.aof_buf));
+         }
+         exit(1);
+-- 
+1.7.11.1
+

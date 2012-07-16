@@ -1,0 +1,25 @@
+Source: redis
+Section: database
+Priority: optional
+Maintainer: Chris Lamb <lamby@debian.org>
+Build-Depends:
+  debhelper (>= 7.0.50),
+  libjemalloc-dev (>= 3.0.0),
+Standards-Version: 3.9.2
+Homepage: http://redis.io/
+Vcs-Git: git://github.com/lamby/pkg-redis.git
+Vcs-Browser: https://github.com/lamby/pkg-redis
+
+Package: redis-server
+Architecture: any
+Depends:
+  ${misc:Depends},
+  ${shlibs:Depends},
+  adduser,
+  libjemalloc1 (>= 3.0.0),
+Description: Persistent key-value database with network interface
+ Redis is a key-value database in a similar vein to memcache but the dataset
+ is non-volatile. Redis additionally provides native support for atomically
+ manipulating and querying data structures such as lists and sets.
+ .
+ The dataset is stored entirely in memory and periodically flushed to disk.

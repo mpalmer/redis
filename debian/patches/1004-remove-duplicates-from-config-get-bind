@@ -1,0 +1,29 @@
+From 545120d0f97739cc4accf1e4a595f83f88543f0c Mon Sep 17 00:00:00 2001
+From: Saj Goonatilleke <sg@redu.cx>
+Date: Fri, 29 Jun 2012 11:36:17 +1000
+Subject: [PATCH 1004/1010] Remove duplicates from CONFIG GET BIND
+
+---
+ src/config.c | 6 ------
+ 1 file changed, 6 deletions(-)
+
+diff --git a/src/config.c b/src/config.c
+index 4bb47cb..e57f9f5 100644
+--- a/src/config.c
++++ b/src/config.c
+@@ -901,12 +901,6 @@ void configGetCommand(redisClient *c) {
+         addReplyBulkCString(c,buf);
+         matches++;
+     }
+-    if (stringmatch(pattern,"bind",0)) {
+-        redisLog(REDIS_VERBOSE,"CONFIG GET bind");
+-        addReplyBulkCString(c,"bind");
+-        addReplyBulkCString(c,server.bindaddr);
+-        matches++;
+-    }
+     setDeferredMultiBulkLength(c,replylen,matches*2);
+ }
+ 
+-- 
+1.7.11.1
+
