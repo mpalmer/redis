@@ -750,6 +750,45 @@ void configSetCommand(redisClient *c) {
         if (getLongLongFromObject(o,&ll) == REDIS_ERR ||
             ll <= 0) goto badfmt;
         server.slave_priority = ll;
+    } else if (!strcasecmp(c->argv[2]->ptr,"bind")) {
+        int newfd = -1;
+
+        if (server.port == 0) {
+            addReplyError(c, "Can not re-bind without server port");
+            return;
+        }
+
+        /*
+         * Support unbinding from an IP address with "config set bind -"
+         */
+        if (strcmp(o->ptr, "-") == 0) {
+            if (server.bindaddr == NULL) {
+                redisLog(REDIS_NOTICE, "Unbinding from '0.0.0.0'");
+            } else if (strcmp(server.bindaddr, "-") != 0) {
+                redisLog(REDIS_NOTICE, "Unbinding from '%s'", server.bindaddr);
+            }
+        } else {
+            redisLog(REDIS_NOTICE, "Rebinding to '%s'", (char*)o->ptr);
+            newfd = anetTcpServer(server.neterr, server.port, o->ptr);
+            if (newfd == ANET_ERR) {
+                addReplyErrorFormat(c, "Failed to re-bind: %s", (char*)server.neterr);
+                return;
+            }
+            if (aeCreateFileEvent(server.el, newfd, AE_READABLE, acceptTcpHandler, NULL) == AE_ERR) {
+                addReplyErrorFormat(c, "Bad accept on fd: %d", newfd);
+                close(newfd);
+                return;
+            }
+        }
+
+        if (server.ipfd != -1) {
+            aeDeleteFileEvent(server.el, server.ipfd, AE_READABLE);
+            close(server.ipfd);
+        }
+
+        server.ipfd = newfd;
+        zfree(server.bindaddr);
+        server.bindaddr = zstrdup(o->ptr);
     } else {
         addReplyErrorFormat(c,"Unsupported CONFIG parameter: %s",
             (char*)c->argv[2]->ptr);

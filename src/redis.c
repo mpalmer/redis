@@ -1422,7 +1422,7 @@ void initServer() {
     server.el = aeCreateEventLoop(server.maxclients+1024);
     server.db = zmalloc(sizeof(redisDb)*server.dbnum);
 
-    if (server.port != 0) {
+    if (server.port != 0 && (server.bindaddr == NULL || strcmp(server.bindaddr, "-") != 0)) {
         server.ipfd = anetTcpServer(server.neterr,server.port,server.bindaddr);
         if (server.ipfd == ANET_ERR) {
             redisLog(REDIS_WARNING, "Opening port %d: %s",
