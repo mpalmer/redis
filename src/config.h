@@ -101,6 +101,10 @@
 #define rdb_fsync_range(fd,off,size) sync_file_range(fd,off,size,SYNC_FILE_RANGE_WAIT_BEFORE|SYNC_FILE_RANGE_WRITE)
 #else
 #define rdb_fsync_range(fd,off,size) fsync(fd)
+
+/* Does your popen(3) support the 'e' flag? */
+#ifdef __linux__
+#define HAVE_POPEN_MODE_E 1
 #endif
 
 /* Byte ordering detection */
