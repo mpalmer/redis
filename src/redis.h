@@ -1086,6 +1086,7 @@ void saveCommand(redisClient *c);
 void bgsaveCommand(redisClient *c);
 void bgrewriteaofCommand(redisClient *c);
 void pipesaveCommand(redisClient *c);
+void dumpsaveCommand(redisClient *c);
 void shutdownCommand(redisClient *c);
 void moveCommand(redisClient *c);
 void renameCommand(redisClient *c);
