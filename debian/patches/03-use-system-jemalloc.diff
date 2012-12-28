@@ -1,7 +1,11 @@
---- a/src/Makefile
-+++ b/src/Makefile
-@@ -71,9 +71,8 @@
- endif
+Description: Use system jemalloc
+ Upstream seem to be "difficult" on this matter. See:
+ https://github.com/antirez/redis/pull/137
+Author: Chris Lamb <lamby@debian.org>
+
+--- redis-2.4.2.orig/src/Makefile
++++ redis-2.4.2/src/Makefile
+@@ -72,8 +72,7 @@
  
  ifeq ($(MALLOC),jemalloc)
 -  DEPENDENCY_TARGETS+= jemalloc
@@ -12,8 +16,8 @@
  endif
  
  REDIS_CC=$(QUIET_CC)$(CC) $(FINAL_CFLAGS)
---- a/src/zmalloc.c
-+++ b/src/zmalloc.c
+--- redis-2.4.2.orig/src/zmalloc.c
++++ redis-2.4.2/src/zmalloc.c
 @@ -61,10 +61,10 @@
  #define realloc(ptr,size) tc_realloc(ptr,size)
  #define free(ptr) tc_free(ptr)
@@ -29,8 +33,8 @@
  #endif
  
  #ifdef HAVE_ATOMIC
---- a/src/zmalloc.h
-+++ b/src/zmalloc.h
+--- a/src/zmalloc.h.orig	2012-10-23 14:56:21.272493961 +0100
++++ b/src/zmalloc.h	2012-10-23 14:56:29.008474117 +0100
 @@ -50,7 +50,7 @@
  #include <jemalloc/jemalloc.h>
  #if (JEMALLOC_VERSION_MAJOR == 2 && JEMALLOC_VERSION_MINOR >= 1) || (JEMALLOC_VERSION_MAJOR > 2)

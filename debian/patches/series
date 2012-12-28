@@ -1,13 +1,2 @@
 02-fix-ftbfs-on-kfreebsd -p1
-03-use-system-jemalloc
-1000-patch-to-allow-config-set-bind-to-work
-1001-new-command-pipesave
-1002-fix-zombie-leaky-pipesaves
-1003-new-command-dumpsave
-1004-remove-duplicates-from-config-get-bind
-1005-make-the-bind-config-parameter-optional
-1006-bug-fix-slaves-being-pinged-every-second
-1007-truncate-short-write-from-the-aof
-1008-retry-writes-to-the-aof-on-enospc
-1009-new-in-info-aof_last_bgrewrite_status
-1010-short-writes-will-not-set-errno
+03-use-system-jemalloc.diff -p1
