@@ -1,6 +1,6 @@
 /* Redis CLI (command line interface)
  *
- * Copyright (c) 2009-2010, Salvatore Sanfilippo <antirez at gmail dot com>
+ * Copyright (c) 2009-2012, Salvatore Sanfilippo <antirez at gmail dot com>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -1233,7 +1233,7 @@ int main(int argc, char **argv) {
 
     /* Pipe mode */
     if (config.pipe_mode) {
-        cliConnect(0);
+        if (cliConnect(0) == REDIS_ERR) exit(1);
         pipeMode();
     }
 
