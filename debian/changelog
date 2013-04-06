@@ -1,3 +1,11 @@
+redis (2:2.6.12-0anchor1) UNRELEASED; urgency=low
+
+  * New upstream release.
+  * Include NDS patch.
+  * Not for general release.
+
+ -- Matt Palmer <mpalmer@debian.org>  Sat, 06 Apr 2013 22:58:45 +1100
+
 redis (2:2.6.7-1) unstable; urgency=low
 
   * New upstream release.
