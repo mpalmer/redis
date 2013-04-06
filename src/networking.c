@@ -1,3 +1,32 @@
+/*
+ * Copyright (c) 2009-2012, Salvatore Sanfilippo <antirez at gmail dot com>
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ *   * Redistributions of source code must retain the above copyright notice,
+ *     this list of conditions and the following disclaimer.
+ *   * Redistributions in binary form must reproduce the above copyright
+ *     notice, this list of conditions and the following disclaimer in the
+ *     documentation and/or other materials provided with the distribution.
+ *   * Neither the name of Redis nor the names of its contributors may be used
+ *     to endorse or promote products derived from this software without
+ *     specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
 #include "redis.h"
 #include <sys/uio.h>
 
@@ -55,13 +84,13 @@ redisClient *createClient(int fd) {
     c->ctime = c->lastinteraction = server.unixtime;
     c->authenticated = 0;
     c->replstate = REDIS_REPL_NONE;
+    c->slave_listening_port = 0;
     c->reply = listCreate();
     c->reply_bytes = 0;
     c->obuf_soft_limit_reached_time = 0;
     listSetFreeMethod(c->reply,decrRefCount);
     listSetDupMethod(c->reply,dupClientReplyValue);
-    c->bpop.keys = NULL;
-    c->bpop.count = 0;
+    c->bpop.keys = dictCreate(&setDictType,NULL);
     c->bpop.timeout = 0;
     c->bpop.target = NULL;
     c->io_keys = listCreate();
@@ -485,11 +514,11 @@ void copyClientOutputBuffer(redisClient *dst, redisClient *src) {
     dst->reply_bytes = src->reply_bytes;
 }
 
-static void acceptCommonHandler(int fd) {
+static void acceptCommonHandler(int fd, int flags) {
     redisClient *c;
     if ((c = createClient(fd)) == NULL) {
-        redisLog(REDIS_WARNING,"Error allocating resoures for the client");
-        close(fd); /* May be already closed, just ingore errors */
+        redisLog(REDIS_WARNING,"Error allocating resources for the client");
+        close(fd); /* May be already closed, just ignore errors */
         return;
     }
     /* If maxclient directive is set and this is one client more... close the
@@ -508,6 +537,7 @@ static void acceptCommonHandler(int fd) {
         return;
     }
     server.stat_numconnections++;
+    c->flags |= flags;
 }
 
 void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
@@ -523,7 +553,7 @@ void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
         return;
     }
     redisLog(REDIS_VERBOSE,"Accepted %s:%d", cip, cport);
-    acceptCommonHandler(cfd);
+    acceptCommonHandler(cfd,0);
 }
 
 void acceptUnixHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
@@ -538,7 +568,7 @@ void acceptUnixHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
         return;
     }
     redisLog(REDIS_VERBOSE,"Accepted connection to %s", server.unixsocket);
-    acceptCommonHandler(cfd);
+    acceptCommonHandler(cfd,REDIS_UNIX_SOCKET);
 }
 
 
@@ -575,6 +605,7 @@ void freeClient(redisClient *c) {
     c->querybuf = NULL;
     if (c->flags & REDIS_BLOCKED)
         unblockClientWaitingData(c);
+    dictRelease(c->bpop.keys);
 
     /* UNWATCH all the keys */
     unwatchAllKeys(c);
@@ -989,9 +1020,9 @@ void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
     server.current_client = c;
     readlen = REDIS_IOBUF_LEN;
     /* If this is a multi bulk request, and we are processing a bulk reply
-     * that is large enough, try to maximize the probabilty that the query
-     * buffer contains excatly the SDS string representing the object, even
-     * at the risk of requring more read(2) calls. This way the function
+     * that is large enough, try to maximize the probability that the query
+     * buffer contains exactly the SDS string representing the object, even
+     * at the risk of requiring more read(2) calls. This way the function
      * processMultiBulkBuffer() can avoid copying buffers to create the
      * Redis Object representing the argument. */
     if (c->reqtype == REDIS_REQ_MULTIBULK && c->multibulklen && c->bulklen != -1
@@ -1061,10 +1092,11 @@ void getClientsMaxBuffers(unsigned long *longest_output_list,
 /* Turn a Redis client into an sds string representing its state. */
 sds getClientInfoString(redisClient *client) {
     char ip[32], flags[16], events[3], *p;
-    int port;
+    int port = 0; /* initialized to zero for the unix socket case. */
     int emask;
 
-    anetPeerToString(client->fd,ip,&port);
+    if (!(client->flags & REDIS_UNIX_SOCKET))
+        anetPeerToString(client->fd,ip,&port);
     p = flags;
     if (client->flags & REDIS_SLAVE) {
         if (client->flags & REDIS_MONITOR)
@@ -1079,6 +1111,7 @@ sds getClientInfoString(redisClient *client) {
     if (client->flags & REDIS_CLOSE_AFTER_REPLY) *p++ = 'c';
     if (client->flags & REDIS_UNBLOCKED) *p++ = 'u';
     if (client->flags & REDIS_CLOSE_ASAP) *p++ = 'A';
+    if (client->flags & REDIS_UNIX_SOCKET) *p++ = 'U';
     if (p == flags) *p++ = 'N';
     *p++ = '\0';
 
@@ -1089,7 +1122,8 @@ sds getClientInfoString(redisClient *client) {
     *p = '\0';
     return sdscatprintf(sdsempty(),
         "addr=%s:%d fd=%d age=%ld idle=%ld flags=%s db=%d sub=%d psub=%d multi=%d qbuf=%lu qbuf-free=%lu obl=%lu oll=%lu omem=%lu events=%s cmd=%s",
-        ip,port,client->fd,
+        (client->flags & REDIS_UNIX_SOCKET) ? server.unixsocket : ip,
+        port,client->fd,
         (long)(server.unixtime - client->ctime),
         (long)(server.unixtime - client->lastinteraction),
         flags,
@@ -1226,7 +1260,7 @@ unsigned long getClientOutputBufferMemoryUsage(redisClient *c) {
     return c->reply_bytes + (list_item_size*listLength(c->reply));
 }
 
-/* Get the class of a client, used in order to envorce limits to different
+/* Get the class of a client, used in order to enforce limits to different
  * classes of clients.
  *
  * The function will return one of the following:

@@ -5,7 +5,7 @@
  * tables of power of two in size are used, collisions are handled by
  * chaining. See the source code for more information... :)
  *
- * Copyright (c) 2006-2010, Salvatore Sanfilippo <antirez at gmail dot com>
+ * Copyright (c) 2006-2012, Salvatore Sanfilippo <antirez at gmail dot com>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -85,29 +85,73 @@ unsigned int dictIdentityHashFunction(unsigned int key)
     return key;
 }
 
-static int dict_hash_function_seed = 5381;
+static uint32_t dict_hash_function_seed = 5381;
 
-void dictSetHashFunctionSeed(unsigned int seed) {
+void dictSetHashFunctionSeed(uint32_t seed) {
     dict_hash_function_seed = seed;
 }
 
-unsigned int dictGetHashFunctionSeed(void) {
+uint32_t dictGetHashFunctionSeed(void) {
     return dict_hash_function_seed;
 }
 
-/* Generic hash function (a popular one from Bernstein).
- * I tested a few and this was the best. */
-unsigned int dictGenHashFunction(const unsigned char *buf, int len) {
-    unsigned int hash = dict_hash_function_seed;
+/* MurmurHash2, by Austin Appleby
+ * Note - This code makes a few assumptions about how your machine behaves -
+ * 1. We can read a 4-byte value from any address without crashing
+ * 2. sizeof(int) == 4
+ *
+ * And it has a few limitations -
+ *
+ * 1. It will not work incrementally.
+ * 2. It will not produce the same results on little-endian and big-endian
+ *    machines.
+ */
+unsigned int dictGenHashFunction(const void *key, int len) {
+    /* 'm' and 'r' are mixing constants generated offline.
+     They're not really 'magic', they just happen to work well.  */
+    uint32_t seed = dict_hash_function_seed;
+    const uint32_t m = 0x5bd1e995;
+    const int r = 24;
 
-    while (len--)
-        hash = ((hash << 5) + hash) + (*buf++); /* hash * 33 + c */
-    return hash;
+    /* Initialize the hash to a 'random' value */
+    uint32_t h = seed ^ len;
+
+    /* Mix 4 bytes at a time into the hash */
+    const unsigned char *data = (const unsigned char *)key;
+
+    while(len >= 4) {
+        uint32_t k = *(uint32_t*)data;
+
+        k *= m;
+        k ^= k >> r;
+        k *= m;
+
+        h *= m;
+        h ^= k;
+
+        data += 4;
+        len -= 4;
+    }
+
+    /* Handle the last few bytes of the input array  */
+    switch(len) {
+    case 3: h ^= data[2] << 16;
+    case 2: h ^= data[1] << 8;
+    case 1: h ^= data[0]; h *= m;
+    };
+
+    /* Do a few final mixes of the hash to ensure the last few
+     * bytes are well-incorporated. */
+    h ^= h >> 13;
+    h *= m;
+    h ^= h >> 15;
+
+    return (unsigned int)h;
 }
 
-/* And a case insensitive version */
+/* And a case insensitive hash function (based on djb hash) */
 unsigned int dictGenCaseHashFunction(const unsigned char *buf, int len) {
-    unsigned int hash = dict_hash_function_seed;
+    unsigned int hash = (unsigned int)dict_hash_function_seed;
 
     while (len--)
         hash = ((hash << 5) + hash) + (tolower(*buf++)); /* hash * 33 + c */
@@ -116,8 +160,8 @@ unsigned int dictGenCaseHashFunction(const unsigned char *buf, int len) {
 
 /* ----------------------------- API implementation ------------------------- */
 
-/* Reset an hashtable already initialized with ht_init().
- * NOTE: This function should only called by ht_destroy(). */
+/* Reset a hash table already initialized with ht_init().
+ * NOTE: This function should only be called by ht_destroy(). */
 static void _dictReset(dictht *ht)
 {
     ht->table = NULL;
@@ -162,18 +206,18 @@ int dictResize(dict *d)
     return dictExpand(d, minimal);
 }
 
-/* Expand or create the hashtable */
+/* Expand or create the hash table */
 int dictExpand(dict *d, unsigned long size)
 {
-    dictht n; /* the new hashtable */
+    dictht n; /* the new hash table */
     unsigned long realsize = _dictNextPower(size);
 
     /* the size is invalid if it is smaller than the number of
-     * elements already inside the hashtable */
+     * elements already inside the hash table */
     if (dictIsRehashing(d) || d->ht[0].used > size)
         return DICT_ERR;
 
-    /* Allocate the new hashtable and initialize all pointers to NULL */
+    /* Allocate the new hash table and initialize all pointers to NULL */
     n.size = realsize;
     n.sizemask = realsize-1;
     n.table = zcalloc(realsize*sizeof(dictEntry*));
@@ -280,7 +324,7 @@ int dictAdd(dict *d, void *key, void *val)
  * a value returns the dictEntry structure to the user, that will make
  * sure to fill the value field as he wishes.
  *
- * This function is also directly expoed to user API to be called
+ * This function is also directly exposed to user API to be called
  * mainly in order to store non-pointers inside the hash value, example:
  *
  * entry = dictAddRaw(dict,mykey);
@@ -607,7 +651,7 @@ static int _dictKeyIndex(dict *d, const void *key)
     unsigned int h, idx, table;
     dictEntry *he;
 
-    /* Expand the hashtable if needed */
+    /* Expand the hash table if needed */
     if (_dictExpandIfNeeded(d) == DICT_ERR)
         return -1;
     /* Compute the key hash value */
