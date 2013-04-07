@@ -1,2 +1,0 @@
-02-fix-ftbfs-on-kfreebsd -p1
-03-use-system-jemalloc.diff -p1
