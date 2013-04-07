@@ -1,3 +1,10 @@
+REDIS-NDS
+
+This is a version of Redis patched to implement NDS (the Naive Disk Store). 
+Documentation on this feature is contained within README.nds.  The rest of
+*this* file is the standard README for Redis itself.
+
+
 Where to find complete Redis documentation?
 -------------------------------------------
 

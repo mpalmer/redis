@@ -1,0 +1,102 @@
+Welcome to the Naive Disk Store.  It is an attempt to see if a really
+stupidly-simple disk-backed store has any hope of working with Redis.  The
+intended use case is for a redis instance that stores a lot of data, but
+with a relatively small active set of keys.  
+
+NDS is implemented by persisting every change to a key to an on-disk
+database, through a periodic "flush" of all keys that have changed
+(controlled by the same logic as RDB dumps).  Every time a key isn't
+available in memory, the on-disk database is checked to see if the key
+exists.
+
+The concept is that you can keep memory usage of your redis instance under
+control by setting maxmemory (with an allkeys-lru eviction policy,
+preferably) and as memory is required, keys that haven't been recently used
+get evicted from memory.  When they're needed again in the future, however,
+they're available on disk.
+
+There are a few "side benefits" to using NDS.  They're not the reason it was
+written, but they're useful anyway.  Whether they're worth it for your
+use-case is up to you.
+
+* Very, very short "startup" time.  Instead of having to load a large RDB or
+  AOF into memory, the redis instance can immediately start serving
+  requests.  The performance will be poor until the popular keys are all
+  in-memory, but often slow operation is better than no operation.
+
+* Disk-efficient, near-real-time persistence.  Disk space usage isn't
+  significantly more than an RDB file, and you never have to trigger a
+  rewrite or a complete dump -- and yet, you still get up-to-date
+  persistence.
+
+Conversely, there are a few downsides:
+
+* Slow performance for a while after startup.  Since redis doesn't pre-fetch
+  any keys on startup, the first time each key accessed after startup there
+  is a hit to disk to go get the key.
+
+* If you access all your keys regularly, performance will suck.  If your
+  "active set" of keys is larger than the memory you choose to use,
+  performance will always be poor because redis will constantly be pulling
+  keys off disk.
+
+
+DEPLOYING
+
+Install the kyotocabinet development files (libkyotocabinet-dev on
+Debian-like systems), then build as normal.
+
+The only *new* configuration option is `nds` -- set it to `yes` to enable
+NDS operation.  This will disable AOF and RDB persistence (including reading
+those files at startup).  You should also adjust the following config
+options:
+
+* `maxmemory` -- assuming you want to use NDS to keep your redis memory
+  usage under control, set `maxmemory` to whatever you want to keep your
+  memory usage to.  You could just use NDS for quick startup and frequent,
+  disk-efficient persistence, in which case you can leave `maxmemory` alone.
+
+* `maxmemory-policy` -- you want to set this to `allkeys-lru`, to ensure
+  that the most frequently used keys are kept in memory and the least-used
+  keys end up living on disk.
+
+* `maxmemory-samples` -- Bumping this up somewhat will help to select
+  "better" keys for eviction.  I use `15` here, and it doesn't appear to
+  kill performance badly.
+
+* `save` -- set this nice and low, because a flush doesn't cost much.  You
+  could go with `1 1` to flush all changes every second.  I use `5 1 1 5` by
+  default, because I like the symmetry.
+
+To fill your NDS redis instance from an existing dataset, you need to
+replicate your data from another redis instance.  By firing up your NDS
+redis on a local address/port, replicating from the existing "live" redis,
+then killing the live redis, changing the NDS redis config to use the live
+address/port/socket/whatever, and then starting it again, you can get the
+cutover downtime to a few seconds if you script it.
+
+
+TODO
+
+NDS is very new, and shouldn't be relied upon for anything really important. 
+There may be some pretty serious bugs in the code that haven't been found
+yet.  If you're not comfortable digging into the code to find the bug and
+submit a patch, you *probably* don't want to be deploying this thing right
+now.
+
+Here are the list of things that are known deficiencies in the code:
+
+* Stats.  It'd be nice to get cache hit rates, read and write counts, and
+  all that sort of good stuff out of redis.
+
+* Keys lose their TTLs when they get stashed.  This presumably just involves
+  modifying the data dumper/loader to include setting the TTL (as is done in
+  full RDB files, probably).  I'll likely leave this for someone who uses
+  TTLs on their keys.
+
+* 'keys', at present, will only work on the keys that are in-memory, and
+  will completely disavow all knowledge of all the keys that are *only* on
+  disk.  Personally, I don't think this is a huge deal -- using 'keys' is a
+  great way to totally wedge your redis -- but it'll need fixing if anyone
+  actually wants 'keys' to be useful.  I expect this'll be as simple as
+  walking the disk database, but damn that'll take a while to get through.

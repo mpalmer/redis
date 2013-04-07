@@ -31,6 +31,7 @@
 #include "lzf.h"    /* LZF compression library */
 #include "zipmap.h"
 #include "endianconv.h"
+#include "nds.h"
 
 #include <math.h>
 #include <sys/types.h>
@@ -1158,6 +1159,9 @@ void startLoading(FILE *fp) {
     } else {
         server.loading_total_bytes = sb.st_size;
     }
+    if (server.nds) {
+        nukeNDSFromOrbit();
+    }
 }
 
 /* Refresh the loading progress info */
@@ -1210,8 +1214,59 @@ int rdbLoad(char *filename) {
 
         /* Serve the clients from time to time */
         if (!(loops++ % 1000)) {
+            int retval;
+            
             loadingProgress(rioTell(&rdb));
             aeProcessEvents(server.el, AE_FILE_EVENTS|AE_DONT_WAIT);
+            if (server.nds) {
+                /* Cribbed straight from serverCron, because it does a pile of
+                 * stuff I don't want to do, and I don't feel like splitting
+                 * it out into a separate function at the moment */
+                if (server.nds_child_pid != -1) {
+                    int statloc;
+                    pid_t pid;
+
+                    if ((pid = wait3(&statloc,WNOHANG,NULL)) != 0) {
+                        int exitcode = WEXITSTATUS(statloc);
+                        int bysignal = 0;
+                
+                        if (pid == -1) {
+                            redisLog(REDIS_WARNING, "wait3() failed: %s", strerror(errno));
+                        }
+
+                        if (WIFSIGNALED(statloc)) bysignal = WTERMSIG(statloc);
+
+                        if (pid > 0 && pid == server.nds_child_pid) {
+                            backgroundNDSFlushDoneHandler(exitcode,bysignal);
+                        }
+                    }
+                }
+                
+                /* It's worth flushing to NDS periodically, to allow memory usage
+                 * to stay under control. */
+                if (server.nds_child_pid == -1) {
+                    backgroundDirtyKeysFlush();
+                }
+
+                /* When NDS is running, it is perfectly reasonable to be flushing
+                 * keys from memory during the RDB load, because they've been stored
+                 * in the freezer already anyway.
+                 */
+                retval = freeMemoryIfNeeded();
+
+                /* We'd prefer it if we didn't exceed the memory limit of the instance
+                 * during the load process; thus, if freeMemoryIfNeeded() wasn't able
+                 * to clear enough memory, let's just go around and around in circles until
+                 * we *are* able to free memory. */
+                if (retval == REDIS_ERR) {
+                    /* If we don't set this back to something that % 1000 == 0,
+                     * then we won't end up in here on the next iteration, which
+                     * is somewhat pointless */
+                    loops = 0;
+                    
+                    continue;
+                }
+            }
         }
 
         /* Read type. */

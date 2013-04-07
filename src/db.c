@@ -28,6 +28,7 @@
  */
 
 #include "redis.h"
+#include "nds.h"
 
 #include <signal.h>
 #include <ctype.h>
@@ -40,10 +41,32 @@ void SlotToKeyDel(robj *key);
  *----------------------------------------------------------------------------*/
 
 robj *lookupKey(redisDb *db, robj *key) {
+    robj *val = NULL;
     dictEntry *de = dictFind(db->dict,key->ptr);
-    if (de) {
-        robj *val = dictGetVal(de);
 
+    if (de) {
+        val = dictGetVal(de);
+    }
+
+    if (server.nds) {
+        if (!de) {
+            robj *obj = getNDS(db, key);
+            
+            if (obj) {
+                /* It would be neat to be able to use dbAdd here, but we'd end
+                 * up with an unnecessary write to the DB if we did, because
+                 * we're hooking into dbAdd to write keys to the DB.
+                 */
+                sds copy = sdsdup(key->ptr);
+                int retval = dictAdd(db->dict, copy, obj);
+
+                redisAssertWithInfo(NULL,key,retval == REDIS_OK);
+            }
+            val = obj;
+        }
+    }
+    
+    if (val) {
         /* Update the access time for the ageing algorithm.
          * Don't do it if we have a saving child, as this will trigger
          * a copy on write madness. */
@@ -93,6 +116,10 @@ void dbAdd(redisDb *db, robj *key, robj *val) {
     int retval = dictAdd(db->dict, copy, val);
 
     redisAssertWithInfo(NULL,key,retval == REDIS_OK);
+    
+    if (server.nds) {
+        touchDirtyKey(db, key->ptr);
+    }
  }
 
 /* Overwrite an existing key with a new value. Incrementing the reference
@@ -104,6 +131,9 @@ void dbOverwrite(redisDb *db, robj *key, robj *val) {
     struct dictEntry *de = dictFind(db->dict,key->ptr);
     
     redisAssertWithInfo(NULL,key,de != NULL);
+    if (server.nds) {
+        touchDirtyKey(db, key->ptr);
+    }
     dictReplace(db->dict, key->ptr, val);
 }
 
@@ -156,10 +186,25 @@ robj *dbRandomKey(redisDb *db) {
 
 /* Delete a key, value, and associated expiration entry if any, from the DB */
 int dbDelete(redisDb *db, robj *key) {
+    int delcount = 0;
+
     /* Deleting an entry from the expires dict will not free the sds of
      * the key, because it is shared with the main dictionary. */
     if (dictSize(db->expires) > 0) dictDelete(db->expires,key->ptr);
+
+    if (server.nds && existsNDS(db, key->ptr)) {
+        /* The key may not be in memory, just in NDS, so we need to check
+         * there too in order to give the client the right answer to the
+         * DEL command.
+         */
+        delcount++;
+    }
+
     if (dictDelete(db->dict,key->ptr) == DICT_OK) {
+        delcount++;
+    }
+
+    if (delcount > 0) {
         return 1;
     } else {
         return 0;
@@ -195,6 +240,9 @@ int selectDb(redisClient *c, int id) {
  *----------------------------------------------------------------------------*/
 
 void signalModifiedKey(redisDb *db, robj *key) {
+    if (server.nds) {
+        touchDirtyKey(db, key->ptr);
+    }
     touchWatchedKey(db,key);
 }
 
