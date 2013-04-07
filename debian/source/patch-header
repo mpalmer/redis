@@ -1,0 +1,9 @@
+Subject: Collected Debian patches for Anchor-specific redis
+Author: Matt Palmer <mpalmer@hezmatt.org>
+    
+The Anchor Redis package is maintained in Git rather than maintaining
+patches as separate files, and separating the patches doesn't seem to be
+worth the effort.  They are therefore all included in this single Debian
+patch.
+                    
+For full commit history and separated commits, see bitts:pkg/redis.git.
