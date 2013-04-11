@@ -192,7 +192,7 @@ int dbDelete(redisDb *db, robj *key) {
      * the key, because it is shared with the main dictionary. */
     if (dictSize(db->expires) > 0) dictDelete(db->expires,key->ptr);
 
-    if (server.nds && existsNDS(db, key->ptr)) {
+    if (server.nds && existsNDS(db, key)) {
         /* The key may not be in memory, just in NDS, so we need to check
          * there too in order to give the client the right answer to the
          * DEL command.
