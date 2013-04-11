@@ -69,6 +69,7 @@ static KCDB *nds_open(redisDb *db, int writer) {
 err_cleanup:
     if (kcdb) {
         kcdbdel(kcdb);
+        kcdb = NULL;
     }
 done:
     return kcdb;    
@@ -90,7 +91,7 @@ static void nds_close(KCDB *kcdb) {
  */
 static int nds_exists(redisDb *db, sds key) {
     KCDB *kcdb = nds_open(db, 0);
-    int rv;
+    int rv = 0;
         
     if (!kcdb) {
         rv = -1;
@@ -115,8 +116,9 @@ static sds nds_get(redisDb *db, sds key) {
 
     if (isDirtyKey(db, key)) {
         /* A dirty key *must* be in memory if it still exists.  If you're
-         * coming here, then the key *isn't* in memory, so I'm not going to
-         * go and get an out-of-date copy off disk for you.
+         * coming here, then the key *isn't* in memory, thus it does not
+         * exist, and so I'm not going to go and get an out-of-date copy off
+         * disk for you.
          */
         return NULL;
     }
