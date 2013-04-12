@@ -605,6 +605,11 @@ struct redisServer {
     /* NDS persistence */
     int nds;                        /* Enable/disable NDS */
     pid_t nds_child_pid;            /* PID of child flushing to NDS */
+    int nds_snapshot_in_progress;   /* Whether we are currently doing a snapshot dump */
+    int nds_snapshot_pending;       /* Whether we're waiting on another NDS dump to
+                                     * complete before starting an NDS snapshot */
+    redisClient *nds_bg_requestor;  /* The redis client which requested we perform
+                                     * a background NDS operation */
     /* Propagation of commands in AOF / replication */
     redisOpArray also_propagate;    /* Additional command to propagate. */
     /* Logging */

@@ -47,4 +47,6 @@ int   isDirtyKey(redisDb *db, sds sdskey);
 int   backgroundDirtyKeysFlush();
 int   flushDirtyKeys();
 void  backgroundNDSFlushDoneHandler();
+
+void  ndsCommand(redisClient *c);
 #endif

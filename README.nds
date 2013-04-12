@@ -76,6 +76,21 @@ address/port/socket/whatever, and then starting it again, you can get the
 cutover downtime to a few seconds if you script it.
 
 
+MANAGEMENT
+
+There are two commands that have been added to the redis command set:
+
+* `NDS FLUSH` -- Use this if you wish to trigger a manual flush of all keys
+  (I can't imagine why you'd need to, but it's there if you want it).
+
+* `NDS SNAPSHOT` -- Take a copy of all of the NDS data files, so you can get
+  consistent disk backups of all your redis data.  The snapshots will be
+  named `snapshot_%i.kch` (where `%i` is the database ID).  For backup
+  purposes, you should exclude all files matching `freezer_*.kch` in your
+  redis data directory (they're the "live" files that will likely change
+  underneath your backup agent).
+
+
 TODO
 
 NDS is very new, and shouldn't be relied upon for anything really important. 
@@ -100,3 +115,9 @@ Here are the list of things that are known deficiencies in the code:
   great way to totally wedge your redis -- but it'll need fixing if anyone
   actually wants 'keys' to be useful.  I expect this'll be as simple as
   walking the disk database, but damn that'll take a while to get through.
+
+* RDB dumps at present won't be complete, since RDB only looks in memory. 
+  This should only be a problem for replication, because we don't need RDB
+  locally any more, but yeah, replication == BROKEN for now.  The most
+  appropriate solution would be to transfer snapshots (above) and then
+  replay the dirty keys to the slave, before stating "yep, we're in sync". 

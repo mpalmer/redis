@@ -516,21 +516,97 @@ int flushDirtyKeys() {
         zfree(vals);
     }
     
-    server.dirty = 0;
-
     redisLog(REDIS_DEBUG, "Flush complete");
+    
+    if (server.nds_snapshot_in_progress) {
+        /* Woohoo!  Snapshot time! */
+        for (int i = 0; i < server.dbnum; i++) {
+            FILE *src = NULL, *dst = NULL;
+            char buf[65536], fname[1024];
+            int sz = 0, rv = 0;
+            
+            snprintf(fname, 1023, "freezer_%i.kch", i);
+            redisLog(REDIS_DEBUG, "Snapshotting %s", fname);
+            src = fopen(fname, "r");
+            if (!src) {
+                if (errno == ENOENT) {
+                    /* That's OK; just means we've never touched this DB */
+                    goto per_db_cleanup;
+                }
+                redisLog(REDIS_WARNING, "Failed to open %s for reading in snapshot: %s", fname, strerror(errno));
+                rv = REDIS_ERR;
+                goto per_db_cleanup;
+            }
+
+            snprintf(fname, 1023, "snapshot_%i.kch", i);
+            dst = fopen(fname, "w");
+            if (!dst) {
+                redisLog(REDIS_WARNING, "Failed to open %s for writing in snapshot: %s", fname, strerror(errno));
+                rv = REDIS_ERR;
+                goto per_db_cleanup;
+            }
+            
+            while (1) {
+                sz = fread(buf, 1, 65536, src);
+                if (fwrite(buf, 1, sz, dst) != sz) {
+                    redisLog(REDIS_WARNING, "Failed to write to %s during snapshot: %s", fname, strerror(errno));
+                    rv = REDIS_ERR;
+                    goto per_db_cleanup;
+                }
+
+                if (sz < 65536) {
+                    if (feof(src)) {
+                        /* Well, that's OK then */
+                        redisLog(REDIS_DEBUG, "Successfully snapshot to %s", fname);
+                        rv = REDIS_OK;
+                        goto per_db_cleanup;
+                    } else if (ferror(src)) {
+                        /* Not so cool */
+                        redisLog(REDIS_WARNING, "Read failed during snapshot of NDS DB %i: %s", i, strerror(errno));
+                        rv = REDIS_ERR;
+                        goto per_db_cleanup;
+                    } else {
+                        /* Just for completeness sake; I don't think this can happen */
+                        redisLog(REDIS_WARNING, "CAN'T HAPPEN during snapshot of NDS DB %i", i);
+                        rv = REDIS_ERR;
+                        goto per_db_cleanup;
+                    }
+                }
+            }
+
+per_db_cleanup:
+            if (src) {
+                fclose(src);
+                src = NULL;
+            }
+            if (dst) {
+                fclose(dst);
+                dst = NULL;
+            }
+            if (rv == REDIS_ERR) {
+                return REDIS_ERR;
+            }
+        }
+    }
+                
     return REDIS_OK;
 }
 
 void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
     redisLog(REDIS_NOTICE, "NDS background save completed.  exitcode=%i, bysignal=%i", exitcode, bysignal);
-    if (exitcode == 0 || bysignal == 0) {
+    if (exitcode == 0 && bysignal == 0) {
         for (int i = 0; i < server.dbnum; i++) {
             redisDb *db = server.db+i;
             dictEmpty(db->flushing_keys);
             server.dirty -= server.dirty_before_bgsave;
         }
         server.lastsave = time(NULL);
+        
+        if (server.nds_bg_requestor) {
+            addReply(server.nds_bg_requestor, shared.ok);
+            server.nds_snapshot_in_progress = 0;
+            server.nds_bg_requestor = NULL;
+        }
     } else {
         /* Merge the flushing keys back into the dirty keys so that they'll be
          * retried on the next flush, since we can't know for certain whether
@@ -552,7 +628,88 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
             
             dictEmpty(db->flushing_keys);
         }
+        
+        if (server.nds_snapshot_in_progress) {
+            addReplyError(server.nds_bg_requestor, "NDS SNAPSHOT failed in child; consult logs for details");
+            server.nds_snapshot_in_progress = 0;
+            server.nds_bg_requestor = NULL;
+        } else if (server.nds_bg_requestor) {
+            addReplyError(server.nds_bg_requestor, "NDS FLUSH failed in child; consult logs for details");
+            server.nds_bg_requestor = NULL;
+        }
     }
         
     server.nds_child_pid = -1;
+    
+    if (server.nds_snapshot_pending) {
+        /* Trigger a snapshot job now */
+        server.nds_snapshot_in_progress = 1;
+        if (backgroundDirtyKeysFlush() == REDIS_ERR) {
+            addReplyError(server.nds_bg_requestor, "Delayed NDS SNAPSHOT failed; consult logs for details");
+            return;
+        }
+        server.nds_snapshot_pending = 0;
+    }
+}
+
+void ndsFlush(redisClient *c) {
+    if (server.nds_bg_requestor) {
+        addReplyError(c, "NDS background operation already in progress");
+        return;
+    }
+
+    server.nds_bg_requestor = c;
+    
+    if (server.nds_child_pid == -1) {
+        if (backgroundDirtyKeysFlush() == REDIS_ERR) {
+            addReplyError(c, "NDS FLUSH failed to start; consult logs for details");
+            server.nds_bg_requestor = NULL;
+            return;
+        }
+    }
+}
+
+void ndsSnapshot(redisClient *c) {
+    if (server.nds_snapshot_pending || server.nds_snapshot_in_progress) {
+        addReplyError(c, "NDS SNAPSHOT already in progress");
+        return;
+    }
+
+    if (server.nds_bg_requestor) {
+        addReplyError(c, "NDS background operation already in progress");
+        return;
+    }
+
+    server.nds_bg_requestor = c;
+    
+    if (server.nds_child_pid == -1) {
+        server.nds_snapshot_in_progress = 1;
+        if (backgroundDirtyKeysFlush() == REDIS_ERR) {
+            addReplyError(c, "NDS SNAPSHOT failed to start; consult logs for details");
+            server.nds_bg_requestor = NULL;
+            return;
+        }
+    } else {
+    	/* A regular (non-snapshot) NDS flush is already in progress; we'll
+         * have to do our snapshot later */
+        server.nds_snapshot_pending = 1;
+    }
+}
+
+void ndsCommand(redisClient *c) {
+    if (!strcasecmp(c->argv[1]->ptr,"snapshot")) {
+        if (c->argc != 2) goto badarity;
+        ndsSnapshot(c);
+    } else if (!strcasecmp(c->argv[1]->ptr,"flush")) {
+        if (c->argc != 2) goto badarity;
+        ndsFlush(c);
+    } else {
+        addReplyError(c,
+            "NDS subcommand must be SNAPSHOT or FLUSH");
+    }
+    return;
+
+badarity:
+    addReplyErrorFormat(c,"Wrong number of arguments for CONFIG %s",
+        (char*) c->argv[1]->ptr);
 }
