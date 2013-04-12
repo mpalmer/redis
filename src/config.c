@@ -789,6 +789,14 @@ void configSetCommand(redisClient *c) {
         server.ipfd = newfd;
         zfree(server.bindaddr);
         server.bindaddr = zstrdup(o->ptr);
+    } else if (!strcasecmp(c->argv[2]->ptr,"port")) {
+        int newport = atoi(o->ptr);
+        if (newport < 0 || newport > 65535) {
+            addReplyErrorFormat(c, "Invalid port: %i", server.port);
+            return;
+        } else {
+            server.port = newport;
+        }
     } else {
         addReplyErrorFormat(c,"Unsupported CONFIG parameter: %s",
             (char*)c->argv[2]->ptr);
