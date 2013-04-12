@@ -1214,14 +1214,14 @@ int rdbLoad(char *filename) {
 
         /* Serve the clients from time to time */
         if (!(loops++ % 1000)) {
-            int retval;
-            
             loadingProgress(rioTell(&rdb));
             aeProcessEvents(server.el, AE_FILE_EVENTS|AE_DONT_WAIT);
         }
         
         /* Flush data to NDS and free memory now and then */
         if (server.nds && !(loops % 100000)) {
+            int retval;
+            
             /* When NDS is running, it is perfectly reasonable to be flushing
              * keys from memory during the RDB load, because they've been stored
              * in the freezer already anyway.
@@ -1236,7 +1236,7 @@ int rdbLoad(char *filename) {
             if (retval == REDIS_ERR) {
                 flushDirtyKeys();
                 if (freeMemoryIfNeeded() == REDIS_ERR) {
-                    redisLog(REDIS_WARN, "Unable to free enough memory to stay under maxmemory during RDB load.");
+                    redisLog(REDIS_WARNING, "Unable to free enough memory to stay under maxmemory during RDB load.");
                 }
             }
         }
