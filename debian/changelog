@@ -1,3 +1,9 @@
+redis (2:2.6.12-0anchor3) squeeze; urgency=low
+
+  * Fix the problem of the negative dirty count after NDS save.
+
+ -- Matt Palmer <mpalmer@debian.org>  Sun, 14 Apr 2013 09:18:52 +1000
+
 redis (2:2.6.12-0anchor2) squeeze; urgency=low
 
   * A variety of fixes for NDS support.  This should be damned close
