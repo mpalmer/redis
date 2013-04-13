@@ -610,6 +610,10 @@ struct redisServer {
                                      * complete before starting an NDS snapshot */
     redisClient *nds_bg_requestor;  /* The redis client which requested we perform
                                      * a background NDS operation */
+    long long stat_nds_cache_hits;  /* Number of times we've been able to fulfill a
+                                     * key lookup from within memory */
+    long long stat_nds_cache_misses;  /* Number of times we've had to go to disk to
+                                       * fulfill a key lookup */
     /* Propagation of commands in AOF / replication */
     redisOpArray also_propagate;    /* Additional command to propagate. */
     /* Logging */
@@ -1046,6 +1050,15 @@ int selectDb(redisClient *c, int id);
 void signalModifiedKey(redisDb *db, robj *key);
 void signalFlushedDb(int dbid);
 unsigned int GetKeysInSlot(unsigned int hashslot, robj **keys, unsigned int count);
+
+/* The blob we pass into functions that walk the keyspace for keysCommand */
+typedef struct {
+    redisClient *c;
+    sds pattern;
+    int plen;
+    int allkeys;
+    int numkeys;
+} keysCommandWalkerData;
 
 /* API to get key arguments from commands */
 #define REDIS_GETKEYS_ALL 0

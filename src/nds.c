@@ -59,7 +59,7 @@ static KCDB *nds_open(redisDb *db, int writer) {
     }
     
     if (!kcdbopen(kcdb, freezer_name, (writer ? KCOWRITER : KCOREADER) | KCOCREATE)) {
-        redisLog(REDIS_WARNING, "Failed to open the freezer: %s", kcecodename(kcdbecode(kcdb)));
+        redisLog(REDIS_WARNING, "Failed to open the freezer for DB %i: %s", db->id, kcecodename(kcdbecode(kcdb)));
         goto err_cleanup;
     }
 
@@ -357,6 +357,55 @@ int delNDS(redisDb *db, robj *key) {
 /* Return 0/1 based on a key's existence in NDS. */
 int existsNDS(redisDb *db, robj *key) {
     return nds_exists(db, key->ptr);
+}
+
+/* Walk the entire keyspace of an NDS database, calling walkerCallback for
+ * every key we find.  Pass in 'data' for any callback-specific state you
+ * might like to deal with.
+ */
+int walkNDS(redisDb *db, int (*walkerCallback)(void *, robj *, robj *), void *data) {
+    KCCUR *cur = NULL;
+    KCDB *kcdb = NULL;
+    char *dbkey;
+    int rv = REDIS_OK;
+    
+    kcdb = nds_open(db, 0);
+    if (!kcdb) {
+        goto cleanup;
+    }
+    
+    cur = kcdbcursor(kcdb);
+    if (!kccurjump(cur)) {
+        redisLog(REDIS_WARNING, "Failed to go to beginning of the keyspace: %s", kcecodename(kcdbecode(kcdb)));
+    }
+    
+    redisLog(REDIS_DEBUG, "Walking the NDS keyspace for DB %i", db->id);
+    
+    do {
+        size_t dbkeysize;
+        
+        dbkey = kccurgetkey(cur, &dbkeysize, 1);
+        if (dbkey) {
+            robj *key = createStringObject(dbkey, dbkeysize);
+            robj *val = getNDS(db, key);
+            kcfree(dbkey);
+            if (walkerCallback(data, key, val) == REDIS_ERR) {
+                redisLog(REDIS_DEBUG, "walkNDS terminated prematurely at callback's request");
+                dbkey = NULL;
+                rv = REDIS_ERR;
+            }
+            decrRefCount(key);
+            decrRefCount(val);
+        }
+    } while (dbkey);
+    
+cleanup:
+    if (cur) {
+        kccurdel(cur);
+    }
+    nds_close(kcdb);
+    
+    return rv;
 }
 
 /* Clear all NDS databases */
@@ -703,13 +752,19 @@ void ndsCommand(redisClient *c) {
     } else if (!strcasecmp(c->argv[1]->ptr,"flush")) {
         if (c->argc != 2) goto badarity;
         ndsFlush(c);
+    } else if (!strcasecmp(c->argv[1]->ptr,"clearstats")) {
+        if (c->argc != 2) goto badarity;
+        server.stat_nds_cache_hits = 0;
+        server.stat_nds_cache_misses = 0;
     } else {
         addReplyError(c,
-            "NDS subcommand must be SNAPSHOT or FLUSH");
+            "NDS subcommand must be SNAPSHOT, FLUSH, or CLEARSTATS");
+        return;
     }
+    addReply(c, shared.ok);
     return;
 
 badarity:
-    addReplyErrorFormat(c,"Wrong number of arguments for CONFIG %s",
+    addReplyErrorFormat(c,"Wrong number of arguments for NDS %s",
         (char*) c->argv[1]->ptr);
 }

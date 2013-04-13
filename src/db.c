@@ -49,9 +49,13 @@ robj *lookupKey(redisDb *db, robj *key) {
     }
 
     if (server.nds) {
-        if (!de) {
+        if (de) {
+            server.stat_nds_cache_hits++;
+        } else {
             robj *obj = getNDS(db, key);
             
+            server.stat_nds_cache_misses++;
+
             if (obj) {
                 /* It would be neat to be able to use dbAdd here, but we'd end
                  * up with an unnecessary write to the DB if we did, because
@@ -328,31 +332,46 @@ void randomkeyCommand(redisClient *c) {
     decrRefCount(key);
 }
 
-void keysCommand(redisClient *c) {
-    dictIterator *di;
-    dictEntry *de;
-    sds pattern = c->argv[1]->ptr;
-    int plen = sdslen(pattern), allkeys;
-    unsigned long numkeys = 0;
-    void *replylen = addDeferredMultiBulkLength(c);
-
-    di = dictGetSafeIterator(c->db->dict);
-    allkeys = (pattern[0] == '*' && pattern[1] == '\0');
-    while((de = dictNext(di)) != NULL) {
-        sds key = dictGetKey(de);
-        robj *keyobj;
-
-        if (allkeys || stringmatchlen(pattern,plen,key,sdslen(key),0)) {
-            keyobj = createStringObject(key,sdslen(key));
-            if (expireIfNeeded(c->db,keyobj) == 0) {
-                addReplyBulk(c,keyobj);
-                numkeys++;
-            }
-            decrRefCount(keyobj);
+int keysCommandWalkerCallback(void *data, robj *key, robj *val) {
+    keysCommandWalkerData *w = (keysCommandWalkerData *)data;
+    REDIS_NOTUSED(val);
+    
+    if (w->allkeys || stringmatchlen(w->pattern,w->plen,key->ptr,sdslen(key->ptr),0)) {
+        if (expireIfNeeded(w->c->db,key) == 0) {
+            addReplyBulk(w->c,key);
+            w->numkeys++;
         }
     }
-    dictReleaseIterator(di);
-    setDeferredMultiBulkLength(c,replylen,numkeys);
+    
+    return REDIS_OK;
+}
+
+void keysCommand(redisClient *c) {
+    void *replylen = addDeferredMultiBulkLength(c);
+    keysCommandWalkerData w;
+
+    w.pattern = c->argv[1]->ptr;
+    w.plen = sdslen(w.pattern);
+    w.allkeys = (w.pattern[0] == '*' && w.pattern[1] == '\0');
+    w.c = c;
+    w.numkeys = 0;
+
+    if (server.nds) {
+        /* Oh my... this could take a while... */
+        walkNDS(c->db, keysCommandWalkerCallback, &w);
+    } else {
+        dictIterator *di;
+        dictEntry *de;
+        di = dictGetSafeIterator(c->db->dict);
+        while((de = dictNext(di)) != NULL) {
+            sds key = dictGetKey(de);
+            robj *keyobj = createStringObject(key, sdslen(key));
+            keysCommandWalkerCallback(&w, keyobj, NULL);
+            decrRefCount(keyobj);
+        }
+        dictReleaseIterator(di);
+    }
+    setDeferredMultiBulkLength(c,replylen,w.numkeys);
 }
 
 void dbsizeCommand(redisClient *c) {

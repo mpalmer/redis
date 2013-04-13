@@ -627,6 +627,17 @@ int rdbSaveKeyValuePair(rio *rdb, robj *key, robj *val,
     return 1;
 }
 
+int rdbSaveIterator(void *data, robj *key, robj *val) {
+    rdbSaveIterData *idata = (rdbSaveIterData *)data;
+    long long expire = getExpire(idata->db, key);
+    
+    if (rdbSaveKeyValuePair(idata->rdb, key, val, expire, idata->now) == -1) {
+        return REDIS_ERR;
+    } else {
+        return REDIS_OK;
+    }
+}
+
 /* Save the DB to a file.  If filename begins with a pipe (`|'), then
  * exec whatever program comes after it and write the DB to its stdin.
  *
@@ -712,29 +723,40 @@ int rdbSaveToFileDescriptor(FILE *fp) {
     if (rdbWriteRaw(&rdb,magic,9) == -1) goto werr;
 
     for (j = 0; j < server.dbnum; j++) {
-        redisDb *db = server.db+j;
-        dict *d = db->dict;
-        if (dictSize(d) == 0) continue;
-        di = dictGetSafeIterator(d);
-        if (!di) {
-            return REDIS_ERR;
-        }
+        rdbSaveIterData idata;
+        dict *d;
+
+        idata.db = server.db+j;
+        idata.now = now;
+        idata.rdb = &rdb;
+        
+        d = idata.db->dict;
 
         /* Write the SELECT DB opcode */
         if (rdbSaveType(&rdb,REDIS_RDB_OPCODE_SELECTDB) == -1) goto werr;
         if (rdbSaveLen(&rdb,j) == -1) goto werr;
 
-        /* Iterate this DB writing every entry */
-        while((de = dictNext(di)) != NULL) {
-            sds keystr = dictGetKey(de);
-            robj key, *o = dictGetVal(de);
-            long long expire;
+        if (server.nds) {
+            if (walkNDS(idata.db, rdbSaveIterator, &idata) == REDIS_ERR) {
+                goto werr;
+            }
+        } else {
+            di = dictGetSafeIterator(d);
+            if (!di) {
+                fclose(fp);
+                return REDIS_ERR;
+            }
 
-            initStaticStringObject(key,keystr);
-            expire = getExpire(db,&key);
-            if (rdbSaveKeyValuePair(&rdb,&key,o,expire,now) == -1) goto werr;
+            /* Iterate this DB writing every entry */
+            while((de = dictNext(di)) != NULL) {
+                sds keystr = dictGetKey(de);
+                robj key, *o = dictGetVal(de);
+            
+                initStaticStringObject(key,keystr);
+                if (!rdbSaveIterator(&idata, &key, o)) goto werr;
+            }
+            dictReleaseIterator(di);
         }
-        dictReleaseIterator(di);
     }
     di = NULL; /* So that we don't release it again on error. */
 
