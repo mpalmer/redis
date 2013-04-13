@@ -647,8 +647,8 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
         for (int i = 0; i < server.dbnum; i++) {
             redisDb *db = server.db+i;
             dictEmpty(db->flushing_keys);
-            server.dirty -= server.dirty_before_bgsave;
         }
+        server.dirty -= server.dirty_before_bgsave;
         server.lastsave = time(NULL);
         
         if (server.nds_bg_requestor) {
