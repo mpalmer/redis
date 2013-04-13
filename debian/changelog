@@ -1,3 +1,10 @@
+redis (2:2.6.12-0anchor2) squeeze; urgency=low
+
+  * A variety of fixes for NDS support.  This should be damned close
+    to something that is suitable for general release.
+
+ -- Matt Palmer <mpalmer@debian.org>  Sat, 06 Apr 2013 22:58:45 +1100
+
 redis (2:2.6.12-0anchor1) UNRELEASED; urgency=low
 
   * New upstream release.
