@@ -279,7 +279,7 @@ static void nds_nuke(redisDb *db) {
 }
 
 robj *getNDS(redisDb *db, robj *key) {
-    sds val;
+    sds val = NULL;
     rio payload;
     int type;
     robj *obj = NULL;
@@ -308,6 +308,9 @@ robj *getNDS(redisDb *db, robj *key) {
     }
 
 nds_cleanup:
+    if (val) {
+        sdsfree(val);
+    }
     return obj;
 }
 
