@@ -753,7 +753,10 @@ int rdbSaveToFileDescriptor(FILE *fp) {
                 robj key, *o = dictGetVal(de);
             
                 initStaticStringObject(key,keystr);
-                if (!rdbSaveIterator(&idata, &key, o)) goto werr;
+                if (rdbSaveIterator(&idata, &key, o) == REDIS_ERR) {
+                    redisLog(REDIS_WARNING, "rdbSaveIterator failed");
+                    goto werr;
+                }
             }
             dictReleaseIterator(di);
         }
