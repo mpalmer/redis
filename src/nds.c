@@ -392,13 +392,13 @@ int walkNDS(redisDb *db,
             robj *key = createStringObject(dbkey, dbkeysize);
             robj *val = getNDS(db, key);
             kcfree(dbkey);
-            if (walkerCallback(data, key, val) == REDIS_ERR) {
+            if (key && val && walkerCallback(data, key, val) == REDIS_ERR) {
                 redisLog(REDIS_DEBUG, "walkNDS terminated prematurely at callback's request");
                 dbkey = NULL;
                 rv = REDIS_ERR;
             }
-            decrRefCount(key);
-            decrRefCount(val);
+            if (key) decrRefCount(key);
+            if (val) decrRefCount(val);
         }
         if (interrupt_rate > 0 && !(++counter % interrupt_rate)) {
             /* Let other clients have a sniff */
