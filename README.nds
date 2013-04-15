@@ -46,10 +46,30 @@ DEPLOYING
 Install the kyotocabinet development files (libkyotocabinet-dev on
 Debian-like systems), then build as normal.
 
-The only *new* configuration option is `nds` -- set it to `yes` to enable
-NDS operation.  This will disable AOF and RDB persistence (including reading
-those files at startup).  You should also adjust the following config
-options:
+There are two new configuration parameters available:
+
+* `nds` -- set this to `yes` to enable NDS.  This will disable AOF and RDB
+  persistence (including reading those files at startup -- you will need to
+  replicate into NDS to get an existing dataset loaded).
+
+* `nds-preload` -- set this to `yes` to tell NDS to load all keys off disk
+  at startup.  This will slow down other clients considerably, although it
+  doesn't block other clients completely.  By enabling this option, you get
+  regular Redis performance (after the preload is complete), but with NDS'
+  persistence model.  You probably shouldn't enable this option if you're
+  trying to keep your memory usage under control.
+
+Once NDS is enabled, you want to change the value of the `save` parameter to
+something really, really low, because saving the changed keys to disk
+doesn't cost very much at all.  I use `5 1 1 5` usually, just because I like
+the symmetry, but `1 1` is equivalent to AOF's "fsync every second" mode,
+and `1 0` is more-or-less "write 'em out as quick as you can", although we
+don't guarantee that keys will be persistent on disk when the command
+completes.
+
+
+There are also a few options you want to tweak, if you want to use NDS for
+its ability to maintain only a subset of keys in memory:
 
 * `maxmemory` -- assuming you want to use NDS to keep your redis memory
   usage under control, set `maxmemory` to whatever you want to keep your
@@ -105,3 +125,14 @@ Here are the list of things that are known deficiencies in the code:
   modifying the data dumper/loader to include setting the TTL (as is done in
   full RDB files, probably).  I'll likely leave this for someone who uses
   TTLs on their keys.
+
+And here are features that might be useful to implement, but aren't bugs as
+such:
+
+* An `nds-sync` mode would be cute (but slow as molasses) -- instead of
+  forking children to write dirty keys to disk, instead write the change to
+  disk immediately.  Ouch.  An alternative would be to use an AOF-style journal
+  (probably with fsync=immediate) to keep a record of those changes that
+  haven't get been flushed to disk (although this would need to set keys,
+  rather than (say) increment them, to avoid problems when a key got written
+  to disk but the flush didn't *complete*).

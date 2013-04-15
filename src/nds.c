@@ -363,11 +363,14 @@ int existsNDS(redisDb *db, robj *key) {
  * every key we find.  Pass in 'data' for any callback-specific state you
  * might like to deal with.
  */
-int walkNDS(redisDb *db, int (*walkerCallback)(void *, robj *, robj *), void *data) {
+int walkNDS(redisDb *db,
+            int (*walkerCallback)(void *, robj *, robj *),
+            void *data,
+            int interrupt_rate) {
     KCCUR *cur = NULL;
     KCDB *kcdb = NULL;
     char *dbkey;
-    int rv = REDIS_OK;
+    int rv = REDIS_OK, counter = 0;
     
     kcdb = nds_open(db, 0);
     if (!kcdb) {
@@ -397,6 +400,10 @@ int walkNDS(redisDb *db, int (*walkerCallback)(void *, robj *, robj *), void *da
             decrRefCount(key);
             decrRefCount(val);
         }
+        if (interrupt_rate > 0 && !(++counter % interrupt_rate)) {
+            /* Let other clients have a sniff */
+            aeProcessEvents(server.el, AE_FILE_EVENTS|AE_DONT_WAIT);
+        }
     } while (dbkey);
     
 cleanup:
@@ -417,6 +424,35 @@ void nukeNDSFromOrbit() {
         
         nds_nuke(db);
     }
+}
+
+static int preloadWalker(void *data, robj *key, robj *val) {
+    redisDb *db = (redisDb *)data;
+    sds copy = sdsdup(key->ptr);
+
+    if (!dictFind(db->dict, copy)) {
+        incrRefCount(val);
+        int retval = dictAdd(db->dict, copy, val);
+
+        redisAssertWithInfo(NULL,key,retval == REDIS_OK);
+    }
+        
+    return REDIS_OK;
+}
+
+/* Read all keys from the NDS datastores into memory. */
+void preloadNDS() {
+    if (server.nds_preload_in_progress || server.nds_preload_complete) {
+        return;
+    }
+    redisLog(REDIS_NOTICE, "Preloading all keys from NDS");
+    server.nds_preload_in_progress = 1;
+    for (int i = 0; i < server.dbnum; i++) {
+        walkNDS(server.db+i, preloadWalker, server.db+i, 1000);
+    }
+    redisLog(REDIS_NOTICE, "NDS preload complete");
+    server.nds_preload_in_progress = 0;
+    server.nds_preload_complete = 1;
 }
 
 /* Add the key to the dirty keys list if it isn't there already */
@@ -756,6 +792,9 @@ void ndsCommand(redisClient *c) {
         if (c->argc != 2) goto badarity;
         server.stat_nds_cache_hits = 0;
         server.stat_nds_cache_misses = 0;
+    } else if (!strcasecmp(c->argv[1]->ptr,"preload")) {
+        if (c->argc != 2) goto badarity;
+        preloadNDS();
     } else {
         addReplyError(c,
             "NDS subcommand must be SNAPSHOT, FLUSH, or CLEARSTATS");

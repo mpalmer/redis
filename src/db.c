@@ -358,7 +358,7 @@ void keysCommand(redisClient *c) {
 
     if (server.nds) {
         /* Oh my... this could take a while... */
-        walkNDS(c->db, keysCommandWalkerCallback, &w);
+        walkNDS(c->db, keysCommandWalkerCallback, &w, -1);
     } else {
         dictIterator *di;
         dictEntry *de;

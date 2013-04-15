@@ -1210,6 +1210,7 @@ void initServerConfig() {
     server.aof_selected_db = -1; /* Make sure the first time will not match */
     server.aof_flush_postponed_start = 0;
     server.nds = 0;
+    server.nds_preload = 0;
     server.pidfile = zstrdup("/var/run/redis.pid");
     server.rdb_filename = zstrdup("dump.rdb");
     server.aof_filename = zstrdup("appendonly.aof");
@@ -1406,6 +1407,8 @@ void initServer() {
     server.rdb_child_pid = -1;
     server.aof_child_pid = -1;
     server.nds_child_pid = -1;
+    server.nds_preload_in_progress = 0;
+    server.nds_preload_complete = 0;
     aofRewriteBufferReset();
     server.aof_buf = sdsempty();
     server.lastsave = time(NULL); /* At startup we consider the DB saved. */
@@ -2329,13 +2332,19 @@ sds genRedisInfoString(char *section) {
         info = sdscatprintf(info,
             "# NDS\r\n"
             "nds_enabled:%i\r\n"
+            "nds_preload:%i\r\n"
             "nds_cache_hits:%lld\r\n"
             "nds_cache_misses:%lld\r\n"
-            "nds_cache_hit_rate:%.02f%%\r\n",
+            "nds_cache_hit_rate:%.02f%%\r\n"
+            "nds_preload_in_progress:%i\r\n"
+            "nds_preload_complete:%i\r\n",
             server.nds,
+            server.nds_preload,
             server.stat_nds_cache_hits,
             server.stat_nds_cache_misses,
-            hit_rate
+            hit_rate,
+            server.nds_preload_in_progress,
+            server.nds_preload_complete
         );
     }
     
@@ -2676,6 +2685,10 @@ int checkForSentinelMode(int argc, char **argv) {
 void loadDataFromDisk(void) {
     if (server.nds) {
         redisLog(REDIS_NOTICE, "Using data from NDS");
+        if (server.nds_preload) {
+            redisLog(REDIS_NOTICE, "Preloading all NDS data");
+            preloadNDS();
+        }
     } else {
         long long start = ustime();
         if (server.aof_state == REDIS_AOF_ON) {
