@@ -290,6 +290,7 @@ robj *getNDS(redisDb *db, robj *key) {
     
     if (val) {
         redisLog(REDIS_DEBUG, "Key %s was found in NDS", (char *)key->ptr);
+
         /* We got one!  Thaw and return */
         
         /* Is the data valid? */
@@ -299,7 +300,7 @@ robj *getNDS(redisDb *db, robj *key) {
         }
         
         rioInitWithBuffer(&payload, val);
-        if (((type = rdbLoadObjectType(&payload) == -1)) ||
+        if (((type = rdbLoadObjectType(&payload)) == -1) ||
             ((obj  = rdbLoadObject(type,&payload)) == NULL))
         {
             redisLog(REDIS_ERR, "Bad data format for key %s; ignoring", (char *)key->ptr);
