@@ -1,3 +1,9 @@
+redis (2:2.6.12-0anchor5) squeeze; urgency=low
+
+  * Fix a couple of fairly important bugs in corner cases.
+
+ -- Matt Palmer <mpalmer@debian.org>  Mon, 15 Apr 2013 21:38:56 +1000
+
 redis (2:2.6.12-0anchor4) squeeze; urgency=low
 
   * Include preload support.  We are now ready to use NDS everywhere.
