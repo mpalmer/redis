@@ -49,6 +49,9 @@ void  nukeNDSFromOrbit();
 void  touchDirtyKey(redisDb *db, sds sdskey);
 int   isDirtyKey(redisDb *db, sds sdskey);
 
+unsigned long long dirtyKeyCount();
+unsigned long long flushingKeyCount();
+
 int   backgroundDirtyKeysFlush();
 int   flushDirtyKeys();
 void  backgroundNDSFlushDoneHandler();

@@ -2327,15 +2327,17 @@ sds genRedisInfoString(char *section) {
             hit_rate = 100.0 * (double)server.stat_nds_cache_hits /
                         (server.stat_nds_cache_hits + server.stat_nds_cache_misses);
         }
-
+        
         if (sections++) info = sdscat(info,"\r\n");
         info = sdscatprintf(info,
             "# NDS\r\n"
             "nds_enabled:%i\r\n"
             "nds_preload:%i\r\n"
-            "nds_cache_hits:%lld\r\n"
-            "nds_cache_misses:%lld\r\n"
+            "nds_cache_hits:%llu\r\n"
+            "nds_cache_misses:%llu\r\n"
             "nds_cache_hit_rate:%.02f%%\r\n"
+            "nds_dirty_keys:%llu\r\n"
+            "nds_flushing_keys:%llu\r\n"
             "nds_preload_in_progress:%i\r\n"
             "nds_preload_complete:%i\r\n",
             server.nds,
@@ -2343,6 +2345,8 @@ sds genRedisInfoString(char *section) {
             server.stat_nds_cache_hits,
             server.stat_nds_cache_misses,
             hit_rate,
+            dirtyKeyCount(),
+            flushingKeyCount(),
             server.nds_preload_in_progress,
             server.nds_preload_complete
         );

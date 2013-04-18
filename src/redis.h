@@ -613,10 +613,10 @@ struct redisServer {
                                      * complete before starting an NDS snapshot */
     redisClient *nds_bg_requestor;  /* The redis client which requested we perform
                                      * a background NDS operation */
-    long long stat_nds_cache_hits;  /* Number of times we've been able to fulfill a
-                                     * key lookup from within memory */
-    long long stat_nds_cache_misses;  /* Number of times we've had to go to disk to
-                                       * fulfill a key lookup */
+    unsigned long long stat_nds_cache_hits;  /* Number of times we've been able to fulfill a
+                                              * key lookup from within memory */
+    unsigned long long stat_nds_cache_misses;  /* Number of times we've had to go to disk to
+                                                * fulfill a key lookup */
     /* Propagation of commands in AOF / replication */
     redisOpArray also_propagate;    /* Additional command to propagate. */
     /* Logging */

@@ -478,6 +478,26 @@ int isDirtyKey(redisDb *db, sds key) {
         return 0;
     }
 }
+
+unsigned long long dirtyKeyCount() {
+    unsigned long long count = 0;
+    
+    for (int i = 0; i < server.dbnum; i++) {
+        count += dictSize((server.db+i)->dirty_keys);
+    }
+    
+    return count;
+}
+
+unsigned long long flushingKeyCount() {
+    unsigned long long count = 0;
+    
+    for (int i = 0; i < server.dbnum; i++) {
+        count += dictSize((server.db+i)->flushing_keys);
+    }
+    
+    return count;
+}
     
 /* Fork and flush all the dirty keys out to disk. */
 int backgroundDirtyKeysFlush() {
