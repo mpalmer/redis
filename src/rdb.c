@@ -1243,28 +1243,10 @@ int rdbLoad(char *filename) {
             aeProcessEvents(server.el, AE_FILE_EVENTS|AE_DONT_WAIT);
         }
         
-        /* Flush data to NDS and free memory now and then */
-        if (server.nds && !(loops % 100000)) {
-            int retval;
-            
-            /* When NDS is running, it is perfectly reasonable to be flushing
-             * keys from memory during the RDB load, because they've been stored
-             * in the freezer already anyway.
-             */
-            retval = freeMemoryIfNeeded();
-
-            /* We'd prefer it if we didn't exceed the memory limit of the
-             * instance during the load process; thus, if
-             * freeMemoryIfNeeded() wasn't able to clear enough memory,
-             * let's flush, try to free memory again, and if that doesn't
-             * work, just let people know and move on with our lives.  */
-            if (retval == REDIS_ERR) {
-                flushDirtyKeys();
-                if (freeMemoryIfNeeded() == REDIS_ERR) {
-                    redisLog(REDIS_WARNING, "Unable to free enough memory to stay under maxmemory during RDB load.");
-                }
-            }
-        }
+        /* It's important to avoid going over memory limits.  This won't
+         * actually *stop* RDB import if we go over memory, but it will help
+         * keep memory usage under control.  */
+        freeMemoryIfNeeded();
 
         /* Read type. */
         if ((type = rdbLoadType(&rdb)) == -1) goto eoferr;
