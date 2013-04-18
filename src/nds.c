@@ -789,9 +789,15 @@ void ndsCommand(redisClient *c) {
     if (!strcasecmp(c->argv[1]->ptr,"snapshot")) {
         if (c->argc != 2) goto badarity;
         ndsSnapshot(c);
+        /* We don't want to send an OK immediately; that'll get sent when the
+         * snapshot completes */
+        return;
     } else if (!strcasecmp(c->argv[1]->ptr,"flush")) {
         if (c->argc != 2) goto badarity;
         ndsFlush(c);
+        /* We don't want to send an OK immediately; that'll get sent when the
+         * flush completes */
+        return;
     } else if (!strcasecmp(c->argv[1]->ptr,"clearstats")) {
         if (c->argc != 2) goto badarity;
         server.stat_nds_cache_hits = 0;
