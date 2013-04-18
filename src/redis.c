@@ -1721,6 +1721,7 @@ int processCommand(redisClient *c) {
     if (server.maxmemory) {
         int retval = freeMemoryIfNeeded();
         if ((c->cmd->flags & REDIS_CMD_DENYOOM) && retval == REDIS_ERR) {
+            redisLog(REDIS_WARNING, "Command denied due to OOM");
             flagTransaction(c);
             addReply(c, shared.oomerr);
             return REDIS_OK;
@@ -2428,8 +2429,10 @@ int freeMemoryIfNeeded(void) {
     /* Check if we are over the memory limit. */
     if (mem_used <= server.maxmemory) return REDIS_OK;
 
-    if (server.maxmemory_policy == REDIS_MAXMEMORY_NO_EVICTION)
+    if (server.maxmemory_policy == REDIS_MAXMEMORY_NO_EVICTION) {
+        redisLog(REDIS_WARNING, "Reached max memory, but maxmemory-policy is noeviction");
         return REDIS_ERR; /* We need to free memory, but policy forbids. */
+    }
 
     /* Compute how much memory we need to free. */
     mem_tofree = mem_used - server.maxmemory;
@@ -2542,7 +2545,27 @@ int freeMemoryIfNeeded(void) {
                 if (slaves) flushSlavesOutputBuffers();
             }
         }
-        if (!keys_freed) return REDIS_ERR; /* nothing to free... */
+        if (!keys_freed) {
+            /* Last chance!  If we're using NDS (and thus may have dirty keys
+             * hogging up all our memory) *and* we're not currently flushing,
+             * we can try to flush all our dirty keys to free up some memory.
+             * This will cause a HUGE throughput stall, so you really should
+             * be flushing often enough that this can't happen. */
+            if (server.nds && dirtyKeyCount() > 0 && flushingKeyCount() == 0) {
+                redisLog(REDIS_WARNING, "Running an emergency NDS flush to try and free up some memory");
+                redisLog(REDIS_NOTICE, "I recommend you increase maxmemory or reduce the interval of your");
+                redisLog(REDIS_NOTICE, "flushes to prevent this happening.");
+                flushDirtyKeys();
+                for (int i = 0; i < server.dbnum; i++) {
+                    dictEmpty((server.db+i)->dirty_keys);
+                }
+                server.dirty = 0;
+                server.lastsave = time(NULL);
+                return freeMemoryIfNeeded();
+            }
+            redisLog(REDIS_WARNING, "No keys suitable for eviction");
+            return REDIS_ERR; /* nothing to free... */
+        }
     }
     return REDIS_OK;
 }
