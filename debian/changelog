@@ -1,3 +1,12 @@
+redis (2:2.6.12-0anchor7) squeeze; urgency=low
+
+  * Bugfixes around NDS FLUSH/NDS SNAPSHOT
+  * Foreground-flush dirty keys if we can't free memory any other
+    way
+  * More NDS-related stats
+
+ -- Matt Palmer <mpalmer@debian.org>  Thu, 18 Apr 2013 14:18:31 +1000
+
 redis (2:2.6.12-0anchor6) squeeze; urgency=low
 
   * A couple more bugfixes.
