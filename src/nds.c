@@ -620,7 +620,7 @@ int flushDirtyKeys() {
         }
         
         /* Cleanup */
-        for (; i >= 0; i--) {
+        for (i = 0; i < nkeys; i++) {
             if (vals[i]) {
                 sdsfree(vals[i]);
             }
