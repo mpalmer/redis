@@ -736,7 +736,7 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
             }
             
             while ((de = dictNext(di)) != NULL) {
-                dictAdd(db->dirty_keys, dictGetKey(de), NULL);
+                dictAdd(db->dirty_keys, sdsdup(dictGetKey(de)), NULL);
             }
             
             dictEmpty(db->flushing_keys);
