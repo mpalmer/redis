@@ -2569,21 +2569,37 @@ int freeMemoryIfNeeded(int headroom) {
             
             /* We didn't manage to free enough memory!  If we're using NDS
              * (and thus may have dirty keys hogging up all our memory)
-             * *and* we're not currently flushing, we can try to flush all
-             * our dirty keys to allow more keys to be freed.  This will
-             * cause a HUGE throughput stall, so you really should be
-             * flushing often enough that this situation can't happen.  */
-            if (server.nds && dirtyKeyCount() > 0 && flushingKeyCount() == 0) {
-                redisLog(REDIS_WARNING, "Running an emergency NDS flush to try and free up some memory");
-                redisLog(REDIS_NOTICE, "I recommend you increase maxmemory or reduce the interval of your");
-                redisLog(REDIS_NOTICE, "flushes to prevent this happening.");
-                flushDirtyKeys();
-                for (int i = 0; i < server.dbnum; i++) {
-                    dictEmpty((server.db+i)->dirty_keys);
+             * we can clear out those dirty keys and try again. */
+            if (server.nds && dirtyKeyCount() > 0) {
+                /* The first possibility is that we're in the middle of a
+                 * background flush, which we'll wait to finish before we
+                 * try freeing more memory.  */
+                if (server.nds_child_pid != -1) {
+                    checkNDSChildComplete();
+                    while (server.nds_child_pid != -1) {
+                        struct timespec tm = { 0, 100000000 };  /* Sleep for 100ms */
+                        nanosleep(&tm, NULL);
+                        checkNDSChildComplete();
+                    }
+                    
+                    /* Keys flushed; how much memory can we save *now*? */
+                    return freeMemoryIfNeeded(headroom);
+                } else {
+                    /* The other possibility is that we've just got an awful lot
+                     * of dirty keys in memory.  In this case, we'll flush them
+                     * ourselves -- without a background job -- and then try to
+                     * free up some memory. */
+                    redisLog(REDIS_WARNING, "Running an emergency NDS flush to try and free up some memory");
+                    redisLog(REDIS_NOTICE, "I recommend you increase maxmemory or reduce the interval of your");
+                    redisLog(REDIS_NOTICE, "flushes to prevent this happening.");
+                    flushDirtyKeys();
+                    for (int i = 0; i < server.dbnum; i++) {
+                        dictEmpty((server.db+i)->dirty_keys);
+                    }
+                    server.dirty = 0;
+                    server.lastsave = time(NULL);
+                    return freeMemoryIfNeeded(headroom);
                 }
-                server.dirty = 0;
-                server.lastsave = time(NULL);
-                return freeMemoryIfNeeded(headroom);
             } else {
                 redisLog(REDIS_WARNING, "No keys suitable for eviction");
                 return REDIS_ERR; /* nothing to free... */
