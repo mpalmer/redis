@@ -79,6 +79,7 @@ void dumpCommand(redisClient *c) {
     dumpobj = createObject(REDIS_STRING,payload.io.buffer.ptr);
     addReplyBulk(c,dumpobj);
     decrRefCount(dumpobj);
+    sdsfree(payload.io.buffer.ptr);
     return;
 }
 
