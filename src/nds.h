@@ -55,6 +55,7 @@ unsigned long long flushingKeyCount();
 int   backgroundDirtyKeysFlush();
 int   flushDirtyKeys();
 void  backgroundNDSFlushDoneHandler();
+void  checkNDSChildComplete();
 
 void  ndsCommand(redisClient *c);
 #endif

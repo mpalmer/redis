@@ -34,6 +34,10 @@
 #include <kclangc.h>
 
 #include <stdio.h>
+#include <sys/types.h>
+#include <sys/time.h>
+#include <sys/resource.h>
+#include <sys/wait.h>
 
 #define FREEZER_FILENAME_LEN 255
 
@@ -765,6 +769,34 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
     }
 }
 
+void checkNDSChildComplete() {
+    if (server.nds_child_pid != -1) {
+        int statloc;
+        pid_t pid;
+
+        if ((pid = wait3(&statloc,WNOHANG,NULL)) != 0) {
+            int exitcode = WEXITSTATUS(statloc);
+            int bysignal = 0;
+
+            if (pid == -1) {
+                redisLog(REDIS_WARNING, "wait3() failed: %s", strerror(errno));
+            }
+
+            if (WIFSIGNALED(statloc)) bysignal = WTERMSIG(statloc);
+
+            if (pid > 0) {
+                if (pid == server.nds_child_pid) {
+                    backgroundNDSFlushDoneHandler(exitcode,bysignal);
+                } else {
+                    redisLog(REDIS_WARNING,
+                        "Warning, detected child with unmatched pid: %ld",
+                        (long)pid);
+                }
+            }
+        }
+    }
+}
+                
 void ndsFlush(redisClient *c) {
     if (server.nds_bg_requestor) {
         addReplyError(c, "NDS background operation already in progress");
