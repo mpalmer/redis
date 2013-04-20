@@ -1240,7 +1240,13 @@ int rdbLoad(char *filename) {
         if (!(loops++ % 1000)) {
             loadingProgress(rioTell(&rdb));
             aeProcessEvents(server.el, AE_FILE_EVENTS|AE_DONT_WAIT);
-        
+
+            checkNDSChildComplete();
+            
+            if (server.nds_child_pid == -1) {
+                backgroundDirtyKeysFlush();
+            }
+
             /* It's important to avoid going over memory limits.  This won't
              * actually *stop* RDB import if we go over memory, but it will help
              * keep memory usage under control.  We try to free up some
