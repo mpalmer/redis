@@ -966,7 +966,7 @@ unsigned int zsetLength(robj *zobj);
 void zsetConvert(robj *zobj, int encoding);
 
 /* Core functions */
-int freeMemoryIfNeeded(void);
+int freeMemoryIfNeeded(int headroom);
 int processCommand(redisClient *c);
 void setupSignalHandlers(void);
 struct redisCommand *lookupCommand(sds name);

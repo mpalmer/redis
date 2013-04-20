@@ -1719,7 +1719,7 @@ int processCommand(redisClient *c) {
      * keys in the dataset). If there are not the only thing we can do
      * is returning an error. */
     if (server.maxmemory) {
-        int retval = freeMemoryIfNeeded();
+        int retval = freeMemoryIfNeeded(0);
         if ((c->cmd->flags & REDIS_CMD_DENYOOM) && retval == REDIS_ERR) {
             redisLog(REDIS_WARNING, "Command denied due to OOM");
             flagTransaction(c);
@@ -2396,9 +2396,16 @@ void monitorCommand(redisClient *c) {
  * function returns REDIS_OK, otherwise REDIS_ERR is returned, and the caller
  * should block the execution of commands that will result in more memory
  * used by the server.
+ *
+ * The parameter 'headroom' is an integer percentage of memory to try and
+ * free, above what is required to keep us just under maxmemory.  When
+ * freeMemoryIfNeeded is called with a non-zero value for 'headroom', and
+ * memory needs to be freed anyway, we will try and ensure that at least
+ * this percentage of maxmemory is unused when we return.  If we can't
+ * manage it, that isn't considered a failure (and won't return REDIS_ERR).
  */
-int freeMemoryIfNeeded(void) {
-    size_t mem_used, mem_tofree, mem_freed;
+int freeMemoryIfNeeded(int headroom) {
+    size_t mem_used, mem_tofree, mem_freed, mem_headroom;
     int slaves = listLength(server.slaves);
 
     /* 0 == "no limit", so that's easy */
@@ -2434,11 +2441,18 @@ int freeMemoryIfNeeded(void) {
         return REDIS_ERR; /* We need to free memory, but policy forbids. */
     }
 
+    if (headroom < 0 || headroom >= 100) {
+        redisLog(REDIS_WARNING, "freeMemoryIfNeeded() called with illegal value for 'headroom' (%i)", headroom);
+        redisLog(REDIS_WARNING, "Ignoring headroom parameter.");
+        headroom = 0;
+    }
+
     /* Compute how much memory we need to free. */
     mem_tofree = mem_used - server.maxmemory;
+    mem_headroom = server.maxmemory * headroom / 100;
     mem_freed = 0;
 
-    while (mem_freed < mem_tofree) {
+    while (mem_freed < (mem_tofree + mem_headroom)) {
         int j, k, keys_freed = 0;
 
         for (j = 0; j < server.dbnum; j++) {
@@ -2546,11 +2560,19 @@ int freeMemoryIfNeeded(void) {
             }
         }
         if (!keys_freed) {
-            /* Last chance!  If we're using NDS (and thus may have dirty keys
-             * hogging up all our memory) *and* we're not currently flushing,
-             * we can try to flush all our dirty keys to free up some memory.
-             * This will cause a HUGE throughput stall, so you really should
-             * be flushing often enough that this can't happen. */
+            if (mem_freed > mem_tofree) {
+                /* We've freed enough to "succeed", we just didn't manage to
+                 * keep enough headroom.  We'll accept that.
+                 */
+                return REDIS_OK;
+            }
+            
+            /* We didn't manage to free enough memory!  If we're using NDS
+             * (and thus may have dirty keys hogging up all our memory)
+             * *and* we're not currently flushing, we can try to flush all
+             * our dirty keys to allow more keys to be freed.  This will
+             * cause a HUGE throughput stall, so you really should be
+             * flushing often enough that this situation can't happen.  */
             if (server.nds && dirtyKeyCount() > 0 && flushingKeyCount() == 0) {
                 redisLog(REDIS_WARNING, "Running an emergency NDS flush to try and free up some memory");
                 redisLog(REDIS_NOTICE, "I recommend you increase maxmemory or reduce the interval of your");
@@ -2561,10 +2583,11 @@ int freeMemoryIfNeeded(void) {
                 }
                 server.dirty = 0;
                 server.lastsave = time(NULL);
-                return freeMemoryIfNeeded();
+                return freeMemoryIfNeeded(headroom);
+            } else {
+                redisLog(REDIS_WARNING, "No keys suitable for eviction");
+                return REDIS_ERR; /* nothing to free... */
             }
-            redisLog(REDIS_WARNING, "No keys suitable for eviction");
-            return REDIS_ERR; /* nothing to free... */
         }
     }
     return REDIS_OK;

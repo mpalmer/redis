@@ -1241,12 +1241,14 @@ int rdbLoad(char *filename) {
         if (!(loops++ % 1000)) {
             loadingProgress(rioTell(&rdb));
             aeProcessEvents(server.el, AE_FILE_EVENTS|AE_DONT_WAIT);
-        }
         
-        /* It's important to avoid going over memory limits.  This won't
-         * actually *stop* RDB import if we go over memory, but it will help
-         * keep memory usage under control.  */
-        freeMemoryIfNeeded();
+            /* It's important to avoid going over memory limits.  This won't
+             * actually *stop* RDB import if we go over memory, but it will help
+             * keep memory usage under control.  We try to free up some
+             * headroom as well, so we're not constantly freeing a few keys
+             * at a time. */
+            freeMemoryIfNeeded(50);
+        }
 
         /* Read type. */
         if ((type = rdbLoadType(&rdb)) == -1) goto eoferr;
