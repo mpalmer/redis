@@ -44,7 +44,7 @@
 /* Generate the name of the freezer we want, based on the database passed
  * in, and stuff the name into buf */
 static void freezer_filename(redisDb *db, char *buf) {
-    snprintf(buf, FREEZER_FILENAME_LEN-1, "freezer_%i.kch", db->id);
+    snprintf(buf, FREEZER_FILENAME_LEN-1, "freezer_%i.kch#dfunit=8", db->id);
 }
 
 /* Open the freezer.  Pass in the redis DB to open the freezer for and
