@@ -600,7 +600,7 @@ int flushDirtyKeys() {
             deVal = dictFind(db->dict, keystr);
             if (!deVal) {
                 /* Key must have been deleted after it got dirtied.  Put it on
-                 * the end of the key list. */
+                 * the end of the key list for deletion later. */
                 nkeys--;
                 keys[nkeys] = keystr;
             } else {
@@ -612,8 +612,11 @@ int flushDirtyKeys() {
         }
 
         i = nds_bulk_put(db, keys, vals, nkeys);
-        
-        if (nkeys == i) {
+
+        if (i < 0) {
+            /* I don't want to know... */
+            return REDIS_ERR;
+        } else if (nkeys == i) {
             redisLog(REDIS_NOTICE, "Flushed %i keys for DB %i", i, db->id);
         } else {
             redisLog(REDIS_WARNING, "Can't happen: flushed a short batch of keys (expected %i, actually flushed %i)", nkeys, i);
@@ -623,7 +626,12 @@ int flushDirtyKeys() {
             nds_bulk_del(db, keys+nkeys, dictSize(db->dirty_keys) - nkeys);
         }
         
-        /* Cleanup */
+        /* Cleanup.  We only walk vals up to nkeys because all the other
+         * vals entries will be empty, because they correspond to deleted
+         * keys, which -- funnily enough -- don't have values!  We also
+         * don't have to cleanup the elements of keys, because they're just
+         * copies of the pointers that are in db->dirty_keys, which get
+         * free()d by dictEmpty() somewhere else. */
         for (i = 0; i < nkeys; i++) {
             if (vals[i]) {
                 sdsfree(vals[i]);
