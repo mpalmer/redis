@@ -386,7 +386,7 @@ int walkNDS(redisDb *db,
     }
     
     cur = kcdbcursor(kcdb);
-    if (!kccurjump(cur)) {
+    if (!kccurjump(cur) && kcdbecode(kcdb) != KCENOREC) {
         redisLog(REDIS_WARNING, "Failed to go to beginning of the keyspace: %s", kcecodename(kcdbecode(kcdb)));
     }
     
