@@ -686,7 +686,7 @@ int flushDirtyKeys() {
                         rv = REDIS_OK;
                         if (server.nds_compress_snapshots) {
                             char cmd[1024];
-                            snprintf(cmd, 1023, "gzip %s", fname);
+                            snprintf(cmd, 1023, "gzip -f %s", fname);
                             system(cmd);
                         }
                         goto per_db_cleanup;
