@@ -1211,6 +1211,7 @@ void initServerConfig() {
     server.aof_flush_postponed_start = 0;
     server.nds = 0;
     server.nds_preload = 0;
+    server.nds_compress_snapshots = 0;
     server.pidfile = zstrdup("/var/run/redis.pid");
     server.rdb_filename = zstrdup("dump.rdb");
     server.aof_filename = zstrdup("appendonly.aof");
@@ -2336,6 +2337,7 @@ sds genRedisInfoString(char *section) {
             "# NDS\r\n"
             "nds_enabled:%i\r\n"
             "nds_preload:%i\r\n"
+            "nds_compress_snapshots:%i\r\n"
             "nds_cache_hits:%llu\r\n"
             "nds_cache_misses:%llu\r\n"
             "nds_cache_hit_rate:%.02f%%\r\n"
@@ -2347,6 +2349,7 @@ sds genRedisInfoString(char *section) {
             "nds_preload_complete:%i\r\n",
             server.nds,
             server.nds_preload,
+            server.nds_compress_snapshots,
             server.stat_nds_cache_hits,
             server.stat_nds_cache_misses,
             hit_rate,

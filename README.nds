@@ -46,7 +46,7 @@ DEPLOYING
 Install the kyotocabinet development files (libkyotocabinet-dev on
 Debian-like systems), then build as normal.
 
-There are two new configuration parameters available:
+There are three new configuration parameters available:
 
 * `nds` -- set this to `yes` to enable NDS.  This will disable AOF and RDB
   persistence (including reading those files at startup -- you will need to
@@ -58,6 +58,11 @@ There are two new configuration parameters available:
   regular Redis performance (after the preload is complete), but with NDS'
   persistence model.  You probably shouldn't enable this option if you're
   trying to keep your memory usage under control.
+
+* `nds-compress-snapshots` -- set this to `yes` to tell NDS to compress
+  snapshots (through the simple expedient of shelling out to `gzip`) after
+  they've been made.  Takes a bit of time, but saves a whole pile of
+  diskspace.
 
 Once NDS is enabled, you want to change the value of the `save` parameter to
 something really, really low, because saving the changed keys to disk

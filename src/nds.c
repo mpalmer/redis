@@ -684,6 +684,11 @@ int flushDirtyKeys() {
                         /* Well, that's OK then */
                         redisLog(REDIS_DEBUG, "Successfully snapshot to %s", fname);
                         rv = REDIS_OK;
+                        if (server.nds_compress_snapshots) {
+                            char cmd[1024];
+                            snprintf(cmd, 1023, "gzip %s", fname);
+                            system(cmd);
+                        }
                         goto per_db_cleanup;
                     } else if (ferror(src)) {
                         /* Not so cool */
