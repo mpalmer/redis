@@ -726,6 +726,7 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
         }
         server.dirty -= server.dirty_before_bgsave;
         server.lastsave = time(NULL);
+        server.stat_nds_flush_success++;
         
         if (server.nds_bg_requestor) {
             addReply(server.nds_bg_requestor, shared.ok);
@@ -733,6 +734,7 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
             server.nds_bg_requestor = NULL;
         }
     } else {
+        server.stat_nds_flush_failure++;
         /* Merge the flushing keys back into the dirty keys so that they'll be
          * retried on the next flush, since we can't know for certain whether
          * they got flushed before our child died */

@@ -617,6 +617,8 @@ struct redisServer {
                                               * key lookup from within memory */
     unsigned long long stat_nds_cache_misses;  /* Number of times we've had to go to disk to
                                                 * fulfill a key lookup */
+    unsigned long long stat_nds_flush_success;  /* How many successful flushes we've done */
+    unsigned long long stat_nds_flush_failure;  /* How many flushes have failed */
     /* Propagation of commands in AOF / replication */
     redisOpArray also_propagate;    /* Additional command to propagate. */
     /* Logging */
