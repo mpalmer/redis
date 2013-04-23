@@ -40,7 +40,7 @@ void  setNDS(redisDb *db, robj *key, robj *val);
 int   delNDS(redisDb *db, robj *key);
 int   existsNDS(redisDb *db, robj *key);
 int   walkNDS(redisDb *db,
-              int (*walkerCallback)(void *data, robj *key, robj *val),
+              int (*walkerCallback)(void *data, robj *key),
               void *data,
               int interrupt_rate);
 void  preloadNDS();

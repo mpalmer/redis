@@ -332,9 +332,8 @@ void randomkeyCommand(redisClient *c) {
     decrRefCount(key);
 }
 
-int keysCommandWalkerCallback(void *data, robj *key, robj *val) {
+int keysCommandWalkerCallback(void *data, robj *key) {
     keysCommandWalkerData *w = (keysCommandWalkerData *)data;
-    REDIS_NOTUSED(val);
     
     if (w->allkeys || stringmatchlen(w->pattern,w->plen,key->ptr,sdslen(key->ptr),0)) {
         if (expireIfNeeded(w->c->db,key) == 0) {
@@ -366,7 +365,7 @@ void keysCommand(redisClient *c) {
         while((de = dictNext(di)) != NULL) {
             sds key = dictGetKey(de);
             robj *keyobj = createStringObject(key, sdslen(key));
-            keysCommandWalkerCallback(&w, keyobj, NULL);
+            keysCommandWalkerCallback(&w, keyobj);
             decrRefCount(keyobj);
         }
         dictReleaseIterator(di);

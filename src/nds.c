@@ -372,7 +372,7 @@ int existsNDS(redisDb *db, robj *key) {
  * might like to deal with.
  */
 int walkNDS(redisDb *db,
-            int (*walkerCallback)(void *, robj *, robj *),
+            int (*walkerCallback)(void *, robj *),
             void *data,
             int interrupt_rate) {
     KCCUR *cur = NULL;
@@ -398,15 +398,13 @@ int walkNDS(redisDb *db,
         dbkey = kccurgetkey(cur, &dbkeysize, 1);
         if (dbkey) {
             robj *key = createStringObject(dbkey, dbkeysize);
-            robj *val = getNDS(db, key);
             kcfree(dbkey);
-            if (key && val && walkerCallback(data, key, val) == REDIS_ERR) {
+            if (key && walkerCallback(data, key) == REDIS_ERR) {
                 redisLog(REDIS_DEBUG, "walkNDS terminated prematurely at callback's request");
                 dbkey = NULL;
                 rv = REDIS_ERR;
             }
             if (key) decrRefCount(key);
-            if (val) decrRefCount(val);
         }
         if (interrupt_rate > 0 && !(++counter % interrupt_rate)) {
             /* Let other clients have a sniff */
@@ -434,13 +432,12 @@ void nukeNDSFromOrbit() {
     }
 }
 
-static int preloadWalker(void *data, robj *key, robj *val) {
+static int preloadWalker(void *data, robj *key) {
     redisDb *db = (redisDb *)data;
     sds copy = sdsdup(key->ptr);
 
     if (!dictFind(db->dict, copy)) {
-        incrRefCount(val);
-        int retval = dictAdd(db->dict, copy, val);
+        int retval = dictAdd(db->dict, copy, getNDS(db, key));
 
         redisAssertWithInfo(NULL,key,retval == REDIS_OK);
     }
