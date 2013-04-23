@@ -44,7 +44,7 @@
 /* Generate the name of the freezer we want, based on the database passed
  * in, and stuff the name into buf */
 static void freezer_filename(redisDb *db, char *buf) {
-    snprintf(buf, FREEZER_FILENAME_LEN-1, "freezer_%i.kch#dfunit=8", db->id);
+    snprintf(buf, FREEZER_FILENAME_LEN-1, "freezer_%i.kch", db->id);
 }
 
 /* Open the freezer.  Pass in the redis DB to open the freezer for and
@@ -558,6 +558,25 @@ int backgroundDirtyKeysFlush() {
     return REDIS_ERR;
 }
 
+typedef struct {
+    redisDb *db;
+    KCDB *kcdb;
+} defragWalkerData;
+
+int defragWalker(void *data, robj *key) {
+    defragWalkerData *wdata = data;
+    sds valstr = nds_get(wdata->db, key->ptr);
+    int rv = REDIS_OK;
+    
+    if (!kcdbset(wdata->kcdb, key->ptr, sdslen(key->ptr), valstr, sdslen(valstr))) {
+        redisLog(REDIS_WARNING, "Failed to write key %s to defrag DB: %s", key->ptr, kcecodename(kcdbecode(wdata->kcdb)));
+        rv = REDIS_ERR;
+    }
+    
+    sdsfree(valstr);
+    return rv;
+}
+
 int flushDirtyKeys() {
     redisLog(REDIS_DEBUG, "Flushing dirty keys");
     for (int j = 0; j < server.dbnum; j++) {
@@ -640,6 +659,54 @@ int flushDirtyKeys() {
     
     redisLog(REDIS_DEBUG, "Flush complete");
     
+    /* Since we're doing so much disk I/O anyway, and because it's best to
+     * have a nice, clean, minimalist database to snapshot, we always defrag
+     * before we take a snapshot. */
+    if (server.nds_defrag_in_progress || server.nds_snapshot_in_progress) {
+        /* Let's clean up some disk space, fellas! */
+        for (int i = 0; i < server.dbnum; i++) {
+            redisDb *db = server.db+i;
+            char freezer_name[FREEZER_FILENAME_LEN], temp_name[FREEZER_FILENAME_LEN];
+            KCDB *tempdb = NULL;
+            int move_into_place = 0;
+            defragWalkerData wdata;
+            
+            freezer_filename(db, freezer_name);
+            snprintf(temp_name, FREEZER_FILENAME_LEN-1, "temp-%u-%i-%i.kch", (unsigned int)time(NULL), getpid(), i);
+            
+            tempdb = kcdbnew();
+            if (!tempdb) {
+                goto per_db_defrag_cleanup;
+            }
+            
+            if (!kcdbopen(tempdb, temp_name, KCOWRITER | KCOCREATE)) {
+                redisLog(REDIS_WARNING, "Failed to open the defrag temp for DB %i: %s", i, kcecodename(kcdbecode(tempdb)));
+                goto per_db_defrag_cleanup;
+            }
+
+            wdata.db = db;
+            wdata.kcdb = tempdb;
+            if (walkNDS(db, defragWalker, &wdata, 0) == REDIS_OK) {
+                move_into_place = 1;
+            }
+
+per_db_defrag_cleanup:
+            if (tempdb) {
+                if (!kcdbclose(tempdb)) {
+                    redisLog(REDIS_WARNING, "Failed to close the defrag dest: %s", kcecodename(kcdbecode(tempdb)));
+                }
+                kcdbdel(tempdb);
+            }
+            
+            if (move_into_place) {
+                rename(temp_name, freezer_name);
+            } else {
+                unlink(temp_name);
+            }
+        }
+    }
+                
+    
     if (server.nds_snapshot_in_progress) {
         /* Woohoo!  Snapshot time! */
         for (int i = 0; i < server.dbnum; i++) {
@@ -653,11 +720,11 @@ int flushDirtyKeys() {
             if (!src) {
                 if (errno == ENOENT) {
                     /* That's OK; just means we've never touched this DB */
-                    goto per_db_cleanup;
+                    goto per_db_snapshot_cleanup;
                 }
                 redisLog(REDIS_WARNING, "Failed to open %s for reading in snapshot: %s", fname, strerror(errno));
                 rv = REDIS_ERR;
-                goto per_db_cleanup;
+                goto per_db_snapshot_cleanup;
             }
 
             snprintf(fname, 1023, "snapshot_%i.kch", i);
@@ -665,7 +732,7 @@ int flushDirtyKeys() {
             if (!dst) {
                 redisLog(REDIS_WARNING, "Failed to open %s for writing in snapshot: %s", fname, strerror(errno));
                 rv = REDIS_ERR;
-                goto per_db_cleanup;
+                goto per_db_snapshot_cleanup;
             }
             
             while (1) {
@@ -673,7 +740,7 @@ int flushDirtyKeys() {
                 if (fwrite(buf, 1, sz, dst) != sz) {
                     redisLog(REDIS_WARNING, "Failed to write to %s during snapshot: %s", fname, strerror(errno));
                     rv = REDIS_ERR;
-                    goto per_db_cleanup;
+                    goto per_db_snapshot_cleanup;
                 }
 
                 if (sz < 65536) {
@@ -686,22 +753,22 @@ int flushDirtyKeys() {
                             snprintf(cmd, 1023, "gzip -f %s", fname);
                             system(cmd);
                         }
-                        goto per_db_cleanup;
+                        goto per_db_snapshot_cleanup;
                     } else if (ferror(src)) {
                         /* Not so cool */
                         redisLog(REDIS_WARNING, "Read failed during snapshot of NDS DB %i: %s", i, strerror(errno));
                         rv = REDIS_ERR;
-                        goto per_db_cleanup;
+                        goto per_db_snapshot_cleanup;
                     } else {
                         /* Just for completeness sake; I don't think this can happen */
                         redisLog(REDIS_WARNING, "CAN'T HAPPEN during snapshot of NDS DB %i", i);
                         rv = REDIS_ERR;
-                        goto per_db_cleanup;
+                        goto per_db_snapshot_cleanup;
                     }
                 }
             }
 
-per_db_cleanup:
+per_db_snapshot_cleanup:
             if (src) {
                 fclose(src);
                 src = NULL;
@@ -733,6 +800,7 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
         if (server.nds_bg_requestor) {
             addReply(server.nds_bg_requestor, shared.ok);
             server.nds_snapshot_in_progress = 0;
+            server.nds_defrag_in_progress = 0;
             server.nds_bg_requestor = NULL;
         }
     } else {
@@ -762,6 +830,10 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
             addReplyError(server.nds_bg_requestor, "NDS SNAPSHOT failed in child; consult logs for details");
             server.nds_snapshot_in_progress = 0;
             server.nds_bg_requestor = NULL;
+        } else if (server.nds_defrag_in_progress) {
+            addReplyError(server.nds_bg_requestor, "NDS DEFRAG failed in child; consult logs for details");
+            server.nds_defrag_in_progress = 0;
+            server.nds_bg_requestor = NULL;
         } else if (server.nds_bg_requestor) {
             addReplyError(server.nds_bg_requestor, "NDS FLUSH failed in child; consult logs for details");
             server.nds_bg_requestor = NULL;
@@ -778,6 +850,16 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
             return;
         }
         server.nds_snapshot_pending = 0;
+        /* A snapshot includes a free bonus defrag, so we can clear that too */
+        server.nds_defrag_pending = 0;
+    } else if (server.nds_defrag_pending) {
+        /* Trigger a defrag job now */
+        server.nds_defrag_in_progress = 1;
+        if (backgroundDirtyKeysFlush() == REDIS_ERR) {
+            addReplyError(server.nds_bg_requestor, "Delayed NDS DEFRAG failed; consult logs for details");
+            return;
+        }
+        server.nds_defrag_pending = 0;
     }
 }
 
@@ -809,7 +891,7 @@ void checkNDSChildComplete() {
     }
 }
                 
-void ndsFlush(redisClient *c) {
+void ndsFlushCommand(redisClient *c) {
     if (server.nds_bg_requestor) {
         addReplyError(c, "NDS background operation already in progress");
         return;
@@ -826,7 +908,34 @@ void ndsFlush(redisClient *c) {
     }
 }
 
-void ndsSnapshot(redisClient *c) {
+void ndsDefragCommand(redisClient *c) {
+    if (server.nds_defrag_pending || server.nds_defrag_in_progress) {
+        addReplyError(c, "NDS DEFRAG already in progress");
+        return;
+    }
+        
+    if (server.nds_bg_requestor) {
+        addReplyError(c, "NDS background operation already in progress");
+        return;
+    }
+
+    server.nds_bg_requestor = c;
+    
+    if (server.nds_child_pid == -1) {
+        server.nds_defrag_in_progress = 1;
+        if (backgroundDirtyKeysFlush() == REDIS_ERR) {
+            addReplyError(c, "NDS DEFRAG failed to start; consult logs for details");
+            server.nds_bg_requestor = NULL;
+            return;
+        }
+    } else {
+        /* A regular (non-defrag) NDS flush is already in progress; we'll
+         * have to do our defrag later */
+        server.nds_defrag_pending = 1;
+    }
+}
+
+void ndsSnapshotCommand(redisClient *c) {
     if (server.nds_snapshot_pending || server.nds_snapshot_in_progress) {
         addReplyError(c, "NDS SNAPSHOT already in progress");
         return;
@@ -856,15 +965,21 @@ void ndsSnapshot(redisClient *c) {
 void ndsCommand(redisClient *c) {
     if (!strcasecmp(c->argv[1]->ptr,"snapshot")) {
         if (c->argc != 2) goto badarity;
-        ndsSnapshot(c);
+        ndsSnapshotCommand(c);
         /* We don't want to send an OK immediately; that'll get sent when the
          * snapshot completes */
         return;
     } else if (!strcasecmp(c->argv[1]->ptr,"flush")) {
         if (c->argc != 2) goto badarity;
-        ndsFlush(c);
+        ndsFlushCommand(c);
         /* We don't want to send an OK immediately; that'll get sent when the
          * flush completes */
+        return;
+    } else if (!strcasecmp(c->argv[1]->ptr,"defrag")) {
+        if (c->argc != 2) goto badarity;
+        ndsDefragCommand(c);
+        /* We don't want to send an OK immediately; that'll get sent when the
+         * defrag completes */
         return;
     } else if (!strcasecmp(c->argv[1]->ptr,"clearstats")) {
         if (c->argc != 2) goto badarity;
@@ -875,7 +990,7 @@ void ndsCommand(redisClient *c) {
         preloadNDS();
     } else {
         addReplyError(c,
-            "NDS subcommand must be SNAPSHOT, FLUSH, or CLEARSTATS");
+            "NDS subcommand must be one of: SNAPSHOT FLUSH CLEARSTATS PRELOAD DEFRAG");
         return;
     }
     addReply(c, shared.ok);

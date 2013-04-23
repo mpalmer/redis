@@ -612,6 +612,9 @@ struct redisServer {
     int nds_snapshot_in_progress;   /* Whether we are currently doing a snapshot dump */
     int nds_snapshot_pending;       /* Whether we're waiting on another NDS dump to
                                      * complete before starting an NDS snapshot */
+    int nds_defrag_in_progress;     /* Whether we are currently doing a defrag */
+    int nds_defrag_pending;         /* Whether we're waiting on another NDS dump to
+                                     * complete before starting an NDS defrag */
     redisClient *nds_bg_requestor;  /* The redis client which requested we perform
                                      * a background NDS operation */
     unsigned long long stat_nds_cache_hits;  /* Number of times we've been able to fulfill a
