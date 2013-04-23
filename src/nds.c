@@ -671,6 +671,8 @@ int flushDirtyKeys() {
             int move_into_place = 0;
             defragWalkerData wdata;
             
+            redisLog(REDIS_NOTICE, "Defragmenting DB %i", i);
+            
             freezer_filename(db, freezer_name);
             snprintf(temp_name, FREEZER_FILENAME_LEN-1, "temp-%u-%i-%i.kch", (unsigned int)time(NULL), getpid(), i);
             
@@ -715,7 +717,7 @@ per_db_defrag_cleanup:
             int sz = 0, rv = 0;
             
             snprintf(fname, 1023, "freezer_%i.kch", i);
-            redisLog(REDIS_DEBUG, "Snapshotting %s", fname);
+            redisLog(REDIS_NOTICE, "Snapshotting %s", fname);
             src = fopen(fname, "r");
             if (!src) {
                 if (errno == ENOENT) {
