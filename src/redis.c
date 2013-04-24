@@ -2616,9 +2616,6 @@ int freeMemoryIfNeeded(int headroom) {
                     redisLog(REDIS_NOTICE, "I recommend you increase maxmemory or reduce the interval of your");
                     redisLog(REDIS_NOTICE, "flushes to prevent this happening.");
                     flushDirtyKeys();
-                    for (int i = 0; i < server.dbnum; i++) {
-                        dictEmpty((server.db+i)->dirty_keys);
-                    }
                     server.dirty = 0;
                     server.lastsave = time(NULL);
                     return freeMemoryIfNeeded(headroom);

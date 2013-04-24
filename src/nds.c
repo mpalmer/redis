@@ -567,7 +567,7 @@ int defragWalker(void *data, robj *key) {
     defragWalkerData *wdata = data;
     sds valstr = nds_get(wdata->db, key->ptr);
     int rv = REDIS_OK;
-    
+
     if (!kcdbset(wdata->kcdb, key->ptr, sdslen(key->ptr), valstr, sdslen(valstr))) {
         redisLog(REDIS_WARNING, "Failed to write key %s to defrag DB: %s", key->ptr, kcecodename(kcdbecode(wdata->kcdb)));
         rv = REDIS_ERR;
@@ -658,6 +658,16 @@ int flushDirtyKeys() {
     }
     
     redisLog(REDIS_DEBUG, "Flush complete");
+
+    /* Some of the things we do down below use nds_get(), which returns NULL if
+     * the key is considered dirty.  Since all keys are now clean, we can clear
+     * the dirty lists.  When this is running in a child process, the parent
+     * will also have to clean its lists separately (because we can't reach out
+     * and touch them from the child). */
+    for (int i = 0; i < server.dbnum; i++) {
+        redisDb *db = server.db+i;
+        dictEmpty(db->dirty_keys);
+    }
     
     /* Since we're doing so much disk I/O anyway, and because it's best to
      * have a nice, clean, minimalist database to snapshot, we always defrag
