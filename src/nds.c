@@ -977,28 +977,33 @@ void ndsSnapshotCommand(redisClient *c) {
 void ndsCommand(redisClient *c) {
     if (!strcasecmp(c->argv[1]->ptr,"snapshot")) {
         if (c->argc != 2) goto badarity;
+        redisLog(REDIS_NOTICE, "NDS SNAPSHOT requested");
         ndsSnapshotCommand(c);
         /* We don't want to send an OK immediately; that'll get sent when the
          * snapshot completes */
         return;
     } else if (!strcasecmp(c->argv[1]->ptr,"flush")) {
         if (c->argc != 2) goto badarity;
+        redisLog(REDIS_NOTICE, "NDS FLUSH requested");
         ndsFlushCommand(c);
         /* We don't want to send an OK immediately; that'll get sent when the
          * flush completes */
         return;
     } else if (!strcasecmp(c->argv[1]->ptr,"defrag")) {
         if (c->argc != 2) goto badarity;
+        redisLog(REDIS_NOTICE, "NDS DEFRAG requested");
         ndsDefragCommand(c);
         /* We don't want to send an OK immediately; that'll get sent when the
          * defrag completes */
         return;
     } else if (!strcasecmp(c->argv[1]->ptr,"clearstats")) {
         if (c->argc != 2) goto badarity;
+        redisLog(REDIS_NOTICE, "NDS CLEARSTATS requested");
         server.stat_nds_cache_hits = 0;
         server.stat_nds_cache_misses = 0;
     } else if (!strcasecmp(c->argv[1]->ptr,"preload")) {
         if (c->argc != 2) goto badarity;
+        redisLog(REDIS_NOTICE, "NDS PRELOAD requested");
         preloadNDS();
     } else {
         addReplyError(c,
