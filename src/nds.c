@@ -800,6 +800,10 @@ per_db_snapshot_cleanup:
 
 void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
     redisLog(REDIS_NOTICE, "NDS background save completed.  exitcode=%i, bysignal=%i", exitcode, bysignal);
+
+    server.nds_snapshot_in_progress = 0;
+    server.nds_defrag_in_progress = 0;
+
     if (exitcode == 0 && bysignal == 0) {
         for (int i = 0; i < server.dbnum; i++) {
             redisDb *db = server.db+i;
@@ -811,8 +815,6 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
         
         if (server.nds_bg_requestor) {
             addReply(server.nds_bg_requestor, shared.ok);
-            server.nds_snapshot_in_progress = 0;
-            server.nds_defrag_in_progress = 0;
             server.nds_bg_requestor = NULL;
         }
     } else {
@@ -854,24 +856,16 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
         
     server.nds_child_pid = -1;
     
-    if (server.nds_snapshot_pending) {
-        /* Trigger a snapshot job now */
-        server.nds_snapshot_in_progress = 1;
-        if (backgroundDirtyKeysFlush() == REDIS_ERR) {
-            addReplyError(server.nds_bg_requestor, "Delayed NDS SNAPSHOT failed; consult logs for details");
-            return;
-        }
+    if (server.nds_snapshot_pending || server.nds_defrag_pending) {
+        /* Trigger a defrag/snapshot job now */
+        server.nds_snapshot_in_progress = server.nds_snapshot_pending;
+        server.nds_defrag_in_progress = server.nds_defrag_pending;
         server.nds_snapshot_pending = 0;
-        /* A snapshot includes a free bonus defrag, so we can clear that too */
         server.nds_defrag_pending = 0;
-    } else if (server.nds_defrag_pending) {
-        /* Trigger a defrag job now */
-        server.nds_defrag_in_progress = 1;
         if (backgroundDirtyKeysFlush() == REDIS_ERR) {
-            addReplyError(server.nds_bg_requestor, "Delayed NDS DEFRAG failed; consult logs for details");
+            addReplyError(server.nds_bg_requestor, "Delayed NDS SNAPSHOT/DEFRAG failed; consult logs for details");
             return;
         }
-        server.nds_defrag_pending = 0;
     }
 }
 
