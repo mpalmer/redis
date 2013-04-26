@@ -540,7 +540,7 @@ int backgroundDirtyKeysFlush() {
             return REDIS_ERR;
         }
         
-        redisLog(REDIS_NOTICE, "Dirty key flush started in PID %d", childpid);
+        redisLog(REDIS_DEBUG, "Dirty key flush started in PID %d", childpid);
         server.nds_child_pid = childpid;
         /* Rotate the dirty keys into the flushing keys list, and use the
          * previous flushing keys list as the new dirty keys list. */
@@ -590,7 +590,7 @@ int flushDirtyKeys() {
         
         if (nkeys == 0) continue;
 
-        redisLog(REDIS_NOTICE, "Planning on flushing up to %i keys to disk for DB %i", nkeys, db->id);
+        redisLog(REDIS_DEBUG, "Planning on flushing up to %i keys to disk for DB %i", nkeys, db->id);
 
         keys = zmalloc(nkeys * sizeof(sds));
         if (!keys) {
@@ -633,7 +633,7 @@ int flushDirtyKeys() {
             /* I don't want to know... */
             return REDIS_ERR;
         } else if (nkeys == i) {
-            redisLog(REDIS_NOTICE, "Flushed %i keys for DB %i", i, db->id);
+            redisLog(REDIS_DEBUG, "Flushed %i keys for DB %i", i, db->id);
         } else {
             redisLog(REDIS_WARNING, "Can't happen: flushed a short batch of keys (expected %i, actually flushed %i)", nkeys, i);
         }
@@ -673,6 +673,7 @@ int flushDirtyKeys() {
      * have a nice, clean, minimalist database to snapshot, we always defrag
      * before we take a snapshot. */
     if (server.nds_defrag_in_progress || server.nds_snapshot_in_progress) {
+    	redisLog(REDIS_NOTICE, "Defragmenting NDS");
         /* Let's clean up some disk space, fellas! */
         for (int i = 0; i < server.dbnum; i++) {
             redisDb *db = server.db+i;
@@ -681,7 +682,7 @@ int flushDirtyKeys() {
             int move_into_place = 0;
             defragWalkerData wdata;
             
-            redisLog(REDIS_NOTICE, "Defragmenting DB %i", i);
+            redisLog(REDIS_DEBUG, "Defragmenting DB %i", i);
             
             freezer_filename(db, freezer_name);
             snprintf(temp_name, FREEZER_FILENAME_LEN-1, "temp-%u-%i-%i.kch", (unsigned int)time(NULL), getpid(), i);
@@ -727,7 +728,7 @@ per_db_defrag_cleanup:
             int sz = 0, rv = 0;
             
             snprintf(fname, 1023, "freezer_%i.kch", i);
-            redisLog(REDIS_NOTICE, "Snapshotting %s", fname);
+            redisLog(REDIS_DEBUG, "Snapshotting %s", fname);
             src = fopen(fname, "r");
             if (!src) {
                 if (errno == ENOENT) {
