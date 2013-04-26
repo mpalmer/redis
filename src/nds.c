@@ -841,16 +841,14 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
             dictEmpty(db->flushing_keys);
         }
         
-        if (server.nds_snapshot_in_progress) {
-            addReplyError(server.nds_bg_requestor, "NDS SNAPSHOT failed in child; consult logs for details");
-            server.nds_snapshot_in_progress = 0;
-            server.nds_bg_requestor = NULL;
-        } else if (server.nds_defrag_in_progress) {
-            addReplyError(server.nds_bg_requestor, "NDS DEFRAG failed in child; consult logs for details");
-            server.nds_defrag_in_progress = 0;
-            server.nds_bg_requestor = NULL;
-        } else if (server.nds_bg_requestor) {
-            addReplyError(server.nds_bg_requestor, "NDS FLUSH failed in child; consult logs for details");
+        if (server.nds_bg_requestor) {
+            if (server.nds_snapshot_in_progress) {
+                addReplyError(server.nds_bg_requestor, "NDS SNAPSHOT failed in child; consult logs for details");
+            } else if (server.nds_defrag_in_progress) {
+                addReplyError(server.nds_bg_requestor, "NDS DEFRAG failed in child; consult logs for details");
+            } else if (server.nds_bg_requestor) {
+                addReplyError(server.nds_bg_requestor, "NDS FLUSH failed in child; consult logs for details");
+            }
             server.nds_bg_requestor = NULL;
         }
     }
