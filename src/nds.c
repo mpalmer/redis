@@ -42,9 +42,13 @@
 #define FREEZER_FILENAME_LEN 255
 
 /* Generate the name of the freezer we want, based on the database passed
- * in, and stuff the name into buf */
-static void freezer_filename(redisDb *db, char *buf) {
-    snprintf(buf, FREEZER_FILENAME_LEN-1, "freezer_%i.kch", db->id);
+ * in, and stuff the name into buf.  Choose whether or not to allow
+ * KC's automatic defrag by setting defrag to 1. */
+static void freezer_filename(redisDb *db, char *buf, int defrag) {
+    snprintf(buf, FREEZER_FILENAME_LEN-1,
+             "freezer_%i.kch%s",
+             db->id,
+             defrag ? "#dfunit=8" : "");
 }
 
 /* Open the freezer.  Pass in the redis DB to open the freezer for and
@@ -55,7 +59,7 @@ static KCDB *nds_open(redisDb *db, int writer) {
     char freezer_name[FREEZER_FILENAME_LEN];
     KCDB *kcdb;
     
-    freezer_filename(db, freezer_name);
+    freezer_filename(db, freezer_name, writer);
     
     kcdb = kcdbnew();
     if (!kcdb) {
@@ -684,7 +688,7 @@ int flushDirtyKeys() {
             
             redisLog(REDIS_DEBUG, "Defragmenting DB %i", i);
             
-            freezer_filename(db, freezer_name);
+            freezer_filename(db, freezer_name, 0);
             snprintf(temp_name, FREEZER_FILENAME_LEN-1, "temp-%u-%i-%i.kch", (unsigned int)time(NULL), getpid(), i);
             
             tempdb = kcdbnew();
