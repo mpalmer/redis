@@ -1252,12 +1252,10 @@ int rdbLoad(char *filename) {
                 backgroundDirtyKeysFlush();
             }
 
-            /* It's important to avoid going over memory limits.  This won't
-             * actually *stop* RDB import if we go over memory, but it will help
-             * keep memory usage under control.  We try to free up some
-             * headroom as well, so we're not constantly freeing a few keys
-             * at a time. */
-            freeMemoryIfNeeded(50);
+            /* It's important to avoid going over memory limits if possible. 
+             * This won't stop RDB import if we go over memory, but it will
+             * help keep memory usage under control.  */
+            freeMemoryIfNeeded();
         }
 
         /* Read type. */

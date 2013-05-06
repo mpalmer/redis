@@ -511,7 +511,7 @@ void configSetCommand(redisClient *c) {
             if (server.maxmemory < zmalloc_used_memory()) {
                 redisLog(REDIS_WARNING,"WARNING: the new maxmemory value set via CONFIG SET is smaller than the current memory usage. This will result in keys eviction and/or inability to accept new write commands depending on the maxmemory-policy.");
             }
-            freeMemoryIfNeeded(0);
+            freeMemoryIfNeeded();
         }
     } else if (!strcasecmp(c->argv[2]->ptr,"hz")) {
         if (getLongLongFromObject(o,&ll) == REDIS_ERR ||
