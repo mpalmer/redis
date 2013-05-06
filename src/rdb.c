@@ -1246,10 +1246,13 @@ int rdbLoad(char *filename) {
             loadingProgress(rioTell(&rdb));
             aeProcessEvents(server.el, AE_FILE_EVENTS|AE_DONT_WAIT);
 
-            checkNDSChildComplete();
+            if (server.nds) {
+                /* Flush as often as we can */
+                checkNDSChildComplete();
             
-            if (server.nds_child_pid == -1) {
-                backgroundDirtyKeysFlush();
+                if (server.nds_child_pid == -1) {
+                    backgroundDirtyKeysFlush();
+                }
             }
 
             /* It's important to avoid going over memory limits if possible. 

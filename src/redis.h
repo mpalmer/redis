@@ -51,6 +51,8 @@
 #include <lua.h>
 #include <signal.h>
 
+#include <lmdb.h>
+
 #include "ae.h"      /* Event driven programming library */
 #include "sds.h"     /* Dynamic safe strings */
 #include "dict.h"    /* Hash tables */
@@ -612,9 +614,6 @@ struct redisServer {
     int nds_snapshot_in_progress;   /* Whether we are currently doing a snapshot dump */
     int nds_snapshot_pending;       /* Whether we're waiting on another NDS dump to
                                      * complete before starting an NDS snapshot */
-    int nds_defrag_in_progress;     /* Whether we are currently doing a defrag */
-    int nds_defrag_pending;         /* Whether we're waiting on another NDS dump to
-                                     * complete before starting an NDS defrag */
     redisClient *nds_bg_requestor;  /* The redis client which requested we perform
                                      * a background NDS operation */
     unsigned long long stat_nds_cache_hits;  /* Number of times we've been able to fulfill a
@@ -623,6 +622,7 @@ struct redisServer {
                                                 * fulfill a key lookup */
     unsigned long long stat_nds_flush_success;  /* How many successful flushes we've done */
     unsigned long long stat_nds_flush_failure;  /* How many flushes have failed */
+    MDB_env *mdb_env;               /* Global pointer the LMDB 'environment' */
     /* Propagation of commands in AOF / replication */
     redisOpArray also_propagate;    /* Additional command to propagate. */
     /* Logging */

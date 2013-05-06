@@ -31,7 +31,7 @@
 #include "redis.h"
 #include "nds.h"
 
-#include <kclangc.h>
+#include <lmdb.h>
 
 #include <stdio.h>
 #include <sys/types.h>
@@ -41,33 +41,109 @@
 
 #define FREEZER_FILENAME_LEN 255
 
+typedef struct {
+	MDB_txn *txn;
+	MDB_dbi dbi;
+	redisDb *rdb;
+} NDSDB;
+
 /* Generate the name of the freezer we want, based on the database passed
- * in, and stuff the name into buf.  Choose whether or not to allow
- * KC's automatic defrag by setting defrag to 1. */
-static void freezer_filename(redisDb *db, char *buf, int defrag) {
+ * in, and stuff the name into buf. */
+static void freezer_filename(redisDb *db, char *buf) {
     snprintf(buf, FREEZER_FILENAME_LEN-1,
-             "freezer_%i.kch%s",
-             db->id,
-             defrag ? "#dfunit=8" : "");
+             "freezer_%i",
+             db->id);
+}
+
+static int nds_init() {
+    int rv = 0;
+    
+    if (server.mdb_env) {
+        return REDIS_OK;
+    }
+
+    redisLog(REDIS_DEBUG, "initialising mdb_env");
+
+    if ((rv = mdb_env_create(&server.mdb_env))) {
+        redisLog(REDIS_WARNING, "mdb_env_create() failed: %s", mdb_strerror(rv));
+        server.mdb_env = NULL;
+        return REDIS_ERR;
+    }
+    
+    if ((rv = mdb_env_set_mapsize(server.mdb_env, (size_t)1048576*1048576))) {  /* 1TB! */
+        redisLog(REDIS_WARNING, "mdb_env_set_mapsize() failed: %s", mdb_strerror(rv));
+        mdb_env_close(server.mdb_env);
+        server.mdb_env = NULL;
+        return REDIS_ERR;
+    }
+    
+    if ((rv = mdb_env_set_maxdbs(server.mdb_env, server.dbnum))) {
+        redisLog(REDIS_WARNING, "mdb_env_set_maxdbs() failed: %s", mdb_strerror(rv));
+        mdb_env_close(server.mdb_env);
+        server.mdb_env = NULL;
+        return REDIS_ERR;
+    }
+    
+    if ((rv = mdb_env_open(server.mdb_env, ".", 0, 0644))) {
+        redisLog(REDIS_WARNING, "mdb_env_open() failed: %s", mdb_strerror(rv));
+        mdb_env_close(server.mdb_env);
+        server.mdb_env = NULL;
+        return REDIS_ERR;
+    }
+    
+    redisLog(REDIS_DEBUG, "mdb_env initialised");
+    
+    return REDIS_OK;
+}
+
+/* Close an NDS database. */
+static void nds_close(NDSDB *ndsdb) {
+    if (!ndsdb) {
+        return;
+    }
+
+    if (ndsdb->txn) {
+        mdb_txn_commit(ndsdb->txn);
+    }
+    
+    if (ndsdb->dbi >= 0) {
+        mdb_dbi_close(server.mdb_env, ndsdb->dbi);
+    }
+    
+    zfree(ndsdb);
 }
 
 /* Open the freezer.  Pass in the redis DB to open the freezer for and
  * whether you want to open for read (writer == 0) or write (writer == 1). 
- * You'll get back a KCDB * ready for use, or NULL on permanent failure
- * (errors will be reported via redisLog).  */
-static KCDB *nds_open(redisDb *db, int writer) {
-    char freezer_name[FREEZER_FILENAME_LEN];
-    KCDB *kcdb;
+ * You'll get back an NDSDB * that can be handed around to other nds_*
+ * functions, or NULL on failure.
+ */
+static NDSDB *nds_open(redisDb *db, int writer) {
+    char db_name[FREEZER_FILENAME_LEN];
+    NDSDB *ndsdb;
+    int rv;
     
-    freezer_filename(db, freezer_name, writer);
+    if (nds_init() == REDIS_ERR) {
+        return NULL;
+    }
     
-    kcdb = kcdbnew();
-    if (!kcdb) {
+    ndsdb = zmalloc(sizeof(NDSDB));
+    if (!ndsdb) {
+        redisLog(REDIS_WARNING, "Failed to allocate an NDSDB: %s", strerror(errno));
+        return NULL;
+    }
+    ndsdb->txn = NULL;
+    ndsdb->rdb = db;
+    
+    freezer_filename(db, db_name);
+    
+    if ((rv = mdb_txn_begin(server.mdb_env, NULL, 0, &(ndsdb->txn)))) {
+        redisLog(REDIS_WARNING, "Failed to open the freezer for DB %i: %s", db->id, mdb_strerror(rv));
         goto err_cleanup;
     }
     
-    if (!kcdbopen(kcdb, freezer_name, (writer ? KCOWRITER : KCOREADER) | KCOCREATE)) {
-        redisLog(REDIS_WARNING, "Failed to open the freezer for DB %i: %s", db->id, kcecodename(kcdbecode(kcdb)));
+    if ((rv = mdb_dbi_open(ndsdb->txn, db_name, MDB_CREATE, &(ndsdb->dbi)))) {
+        redisLog(REDIS_WARNING, "Failed to open freezer DBi for DB %i: %s", db->id, mdb_strerror(rv));
         goto err_cleanup;
     }
 
@@ -75,54 +151,55 @@ static KCDB *nds_open(redisDb *db, int writer) {
     goto done;
 
 err_cleanup:
-    if (kcdb) {
-        kcdbdel(kcdb);
-        kcdb = NULL;
-    }
-done:
-    return kcdb;    
-}
+    nds_close(ndsdb);
+    ndsdb = NULL;
 
-/* Close an NDS database. */
-static void nds_close(KCDB *kcdb) {
-    if (kcdb) {
-        if (!kcdbclose(kcdb)) {
-            redisLog(REDIS_WARNING, "Failed to close the freezer: %s", kcecodename(kcdbecode(kcdb)));
-        }
-        kcdbdel(kcdb);
-    }
+done:
+    return ndsdb;    
 }
 
 /* Check whether a key exists in the NDS.  Give me a DB and a key, and
  * I'll give you a 1/0 to say whether it exists or not.  You'll get -1
  * if there was an error.
  */
-static int nds_exists(redisDb *db, sds key) {
-    KCDB *kcdb = nds_open(db, 0);
-    int rv = 0;
-        
-    if (!kcdb) {
-        rv = -1;
-        goto cleanup;
+static int nds_exists(NDSDB *db, sds key) {
+    MDB_val k, v;
+    int rv;
+    
+    k.mv_size = sdslen(key);
+    k.mv_data = key;
+    
+    if (isDirtyKey(db->rdb, key)) {
+        /* If the key's dirty but you're coming here, then it isn't in
+         * memory, so it clearly mustn't exist.  */
+        return 0;
     }
     
-    rv = kcdbcheck(kcdb, key, sdslen(key));
+    rv = mdb_get(db->txn, db->dbi, &k, &v);
     
-cleanup:
-    nds_close(kcdb);
+    if (rv == 0) {
+        rv = 1;
+    } else if (rv == MDB_NOTFOUND) {
+        rv = 0;
+    } else {
+        redisLog(REDIS_WARNING, "mdb_get(%s) failed: %s", key, mdb_strerror(rv));
+        rv = -1;
+    }
+
     return rv;
 }
 
 /* Get a value out of the NDS.  Pass in the DB and key to get the value for,
  * and return an sds containing the value if found, or NULL on error or
  * key-not-found.  Will report errors via redisLog.  */
-static sds nds_get(redisDb *db, sds key) {
-    KCDB *kcdb;
-    char *valdata;
-    size_t vallen;
-    sds val = NULL;
-
-    if (isDirtyKey(db, key)) {
+static sds nds_get(NDSDB *db, sds key) {
+    MDB_val k, v;
+    int rv;
+    
+    k.mv_size = sdslen(key);
+    k.mv_data = key;
+    
+    if (isDirtyKey(db->rdb, key)) {
         /* A dirty key *must* be in memory if it still exists.  If you're
          * coming here, then the key *isn't* in memory, thus it does not
          * exist, and so I'm not going to go and get an out-of-date copy off
@@ -131,159 +208,86 @@ static sds nds_get(redisDb *db, sds key) {
         return NULL;
     }
 
-    if (!(kcdb = nds_open(db, 0))) {
-        goto cleanup;
+    rv = mdb_get(db->txn, db->dbi, &k, &v);
+    
+    if (rv && rv != MDB_NOTFOUND) {
+        redisLog(REDIS_WARNING, "mdb_get(%s) failed: %s", key, mdb_strerror(rv));
     }
     
-    valdata = kcdbget(kcdb, key, sdslen(key), &vallen);
-    
-    if (valdata) {
-        val = sdsnewlen(valdata, vallen);
-        kcfree(valdata);
+    if (rv) {
+        return NULL;
     }
-
-cleanup:
-    nds_close(kcdb);
-    return val;
+    
+    return sdsnewlen(v.mv_data, v.mv_size);
 }
 
-/* Put a valud into the NDS.  Takes a redisDB, a key, and a value, and makes
- * sure they get into the database (or you at least know what's going on via the
- * logs). Returns 0 on failure or 1 on success. */
-static int nds_put(redisDb *db, sds key, sds val) {
-    KCDB *kcdb = nds_open(db, 1);
-    int rv = 1;
+/* Set a value in the NDS.  Takes an NDSDB, a key, and a value, and makes
+ * sure they get into the database (or you at least know what's going on via
+ * the logs).  Returns REDIS_ERR on failure or REDIS_OK on success.  */
+static int nds_set(NDSDB *db, sds key, sds val) {
+    int rv = REDIS_OK;
+    MDB_val k, v;
     
-    if (!kcdb) {
-        rv = 0;
-        goto cleanup;
-    }
+    k.mv_size = sdslen(key);
+    k.mv_data = key;
     
-    if (!kcdbset(kcdb, key, sdslen(key), val, sdslen(val))) {
-        redisLog(REDIS_ERR, "Failed to put %s: %s", key, kcecodename(kcdbecode(kcdb)));
-        rv = 0;
-        goto cleanup;
+    v.mv_size = sdslen(val);
+    v.mv_data = val;
+    
+    rv = mdb_put(db->txn, db->dbi, &k, &v, 0);
+    
+    if (rv == MDB_TXN_FULL) {
+        /* Odd... let's flush this transaction and try one more time */
+        rv = mdb_txn_commit(db->txn);
+        if (rv) {
+            redisLog(REDIS_WARNING, "Failed to commit txn: %s", mdb_strerror(rv));
+            mdb_dbi_close(server.mdb_env, db->dbi);
+            mdb_txn_begin(server.mdb_env, NULL, 0, &(db->txn));
+            mdb_dbi_open(db->txn, NULL, MDB_CREATE, &(db->dbi));
+            return REDIS_ERR;
+        } else {
+	    return REDIS_OK;
+	}
+    } else if (rv) {
+        redisLog(REDIS_WARNING, "mdb_put(%s) failed: %s", key, mdb_strerror(rv));
+        return REDIS_ERR;
+    } else {
+        return REDIS_OK;
     }
-
-cleanup:
-    nds_close(kcdb);
-    return rv;
 }
 
-/* Deletion time!  Takes a redisDB and a key, and make the key go away.  Tells the user
- * about problems via the logs, and returns -1 if an error occured. */
-static int nds_del(redisDb *db, sds key) {
-    KCDB *kcdb = nds_open(db, 1);
-    int rv = 1;
+/* Deletion time!  Take an NDSDB and a key, and make the key go away.  Tells
+ * the user about problems via the logs, and returns 1 if a key was deleted,
+ * 0 if no key was deleted, and -1 if an error occured. */
+static int nds_del(NDSDB *db, sds key) {
+    MDB_val k;
+    int rv;
     
-    if (!kcdb) {
-        rv = -1;
-        goto cleanup;
+    k.mv_size = sdslen(key);
+    k.mv_data = key;
+    
+    rv = mdb_del(db->txn, db->dbi, &k, NULL);
+    
+    if (rv == MDB_NOTFOUND) {
+        return 0;
+    } else if (rv) {
+        redisLog(REDIS_WARNING, "nds_del(%s) failed: %s", key, mdb_strerror(rv));
+        return -1;
+    } else {
+        return 1;
     }
-    
-    if (!kcdbremove(kcdb, key, sdslen(key))) {
-        /* ROAR!  I can't distinguish between a failure and 'no record', so
-         * I'll just have to make a potentially-unwarranted assumption that
-         * no record was found. */
-        rv = 0;
-    }    
-    
-cleanup:
-    nds_close(kcdb);
-    return rv;
 }
-
-/* Spam lots of puts in bulk.  Useful for flushes.  Returns the number of records
- * written on success, or -1 on error.  If error, there are no guarantees of which
- * keys may or may not have been written. */
-static int nds_bulk_put(redisDb *db, sds *keys, sds *vals, int kcount) {
-    KCDB *kcdb = NULL;
-    KCREC *recs = NULL;
-    int rv = kcount;
-    
-    recs = zmalloc(sizeof(KCREC) * kcount);
-    if (!recs) {
-        redisLog(REDIS_WARNING, "nds_bulk_put: Failed to allocate recs");
-        goto cleanup;
-    }
-    
-    for (int i = 0; i < kcount; i++) {
-    	recs[i].key.buf    = keys[i];
-    	recs[i].key.size   = sdslen(keys[i]);
-    	recs[i].value.buf  = vals[i];
-    	recs[i].value.size = sdslen(vals[i]);
-    }
-    
-    kcdb = nds_open(db, 1);
-    
-    if (!kcdb) {
-        rv = -1;
-        goto cleanup;
-    }
-    if (kcdbsetbulk(kcdb, recs, kcount, 0) == -1) {
-        redisLog(REDIS_WARNING, "NDS batch write failed: %s", kcecodename(kcdbecode(kcdb)));
-        rv = -1;
-        goto cleanup;
-    }
-    
-cleanup:
-    if (kcdb) {
-        nds_close(kcdb);
-    }
-    if (recs) {
-        zfree(recs);
-    }
-    return rv;
-}
-
-/* Spam lots of dels in bulk.  Useful for flushes.  Returns the number of records
- * deleted on success, or -1 on error.  If error, there are no guarantees of which
- * keys may or may not have been deleted. */
-static int nds_bulk_del(redisDb *db, sds *keys, int kcount) {
-    KCDB *kcdb = NULL;
-    KCSTR *kckeys = NULL;
-    int rv = kcount;
-    
-    kckeys = zmalloc(sizeof(KCSTR) * kcount);
-    if (!kckeys) {
-        redisLog(REDIS_WARNING, "nds_bulk_del: Failed to allocate kckeys");
-        goto cleanup;
-    }
-    
-    for (int i = 0; i < kcount; i++) {
-    	kckeys[i].buf    = keys[i];
-    	kckeys[i].size   = sdslen(keys[i]);
-    }
-    
-    kcdb = nds_open(db, 1);
-    
-    if (!kcdb) {
-        rv = -1;
-        goto cleanup;
-    }
-    if (kcdbremovebulk(kcdb, kckeys, kcount, 0) == -1) {
-        redisLog(REDIS_WARNING, "NDS batch delete failed: %s", kcecodename(kcdbecode(kcdb)));
-        rv = -1;
-        goto cleanup;
-    }
-    
-cleanup:
-    if (kcdb) {
-        nds_close(kcdb);
-    }
-    if (kckeys) {
-        zfree(kckeys);
-    }
-    return rv;
-}
-
 
 static void nds_nuke(redisDb *db) {
-    KCDB *kcdb = nds_open(db, 1);
+    NDSDB *ndsdb = nds_open(db, 1);
     
-    if (kcdb) kcdbclear(kcdb);
+    if (!ndsdb) {
+        return;
+    }
     
-    nds_close(kcdb);
+    mdb_drop(ndsdb->txn, ndsdb->dbi, 1);
+    
+    nds_close(ndsdb);
 }
 
 robj *getNDS(redisDb *db, robj *key) {
@@ -291,10 +295,17 @@ robj *getNDS(redisDb *db, robj *key) {
     rio payload;
     int type;
     robj *obj = NULL;
+    NDSDB *ndsdb = nds_open(db, 0);
     
     redisLog(REDIS_DEBUG, "Looking up %s in NDS", (char *)key->ptr);
 
-    val = nds_get(db, key->ptr);
+    if (!ndsdb) {
+        return NULL;
+    }
+    
+    val = nds_get(ndsdb, key->ptr);
+    
+    nds_close(ndsdb);
     
     if (val) {
         redisLog(REDIS_DEBUG, "Key %s was found in NDS", (char *)key->ptr);
@@ -303,7 +314,7 @@ robj *getNDS(redisDb *db, robj *key) {
         
         /* Is the data valid? */
         if (verifyDumpPayload((unsigned char *)val, (size_t)sdslen(val)) == REDIS_ERR) {
-            redisLog(REDIS_ERR, "Invalid payload for key %s; ignoring", (char *)key->ptr);
+            redisLog(REDIS_WARNING, "Invalid payload for key %s; ignoring", (char *)key->ptr);
             goto nds_cleanup;
         }
         
@@ -311,7 +322,7 @@ robj *getNDS(redisDb *db, robj *key) {
         if (((type = rdbLoadObjectType(&payload)) == -1) ||
             ((obj  = rdbLoadObject(type,&payload)) == NULL))
         {
-            redisLog(REDIS_ERR, "Bad data format for key %s; ignoring", (char *)key->ptr);
+            redisLog(REDIS_WARNING, "Bad data format for key %s; ignoring", (char *)key->ptr);
             goto nds_cleanup;
         }
     }
@@ -325,6 +336,7 @@ nds_cleanup:
 
 void setNDS(redisDb *db, robj *key, robj *val) {
     rio payload;
+    NDSDB *ndsdb;
     
     /* We *can* end up in the situation where setNDS gets called on a key
      * that has been deleted.  Rather than try to special-case that
@@ -338,37 +350,50 @@ void setNDS(redisDb *db, robj *key, robj *val) {
     redisLog(REDIS_DEBUG, "Writing %s to NDS", (char *)key->ptr);
     
     createDumpPayload(&payload, val);
-    nds_put(db, key->ptr, payload.io.buffer.ptr);
+    
+    ndsdb = nds_open(db, 1);
+    if (!ndsdb) {
+        return;
+    }
+    nds_set(ndsdb, key->ptr, payload.io.buffer.ptr);
+    nds_close(ndsdb);
 }
 
 /* Delete a key from the NDS.  Returns 0 if the key wasn't found, or
  * 1 if it was.  -1 is returned on error.
  */
 int delNDS(redisDb *db, robj *key) {
-    sds val;
+    NDSDB *ndsdb = nds_open(db, 1);
     int rv = 0;
     
     redisLog(REDIS_DEBUG, "Deleting %s from NDS", (char *)key->ptr);
     
-    /* This is a bit racey, but leveldb doesn't appear to give me any way to
-     * find out directly from the API whether or not a key was actually deleted.
-     */
-    val = nds_get(db, key->ptr);
-    if (val) {
-        sdsfree(val);
-        rv = 1;
+    if (!ndsdb) {
+        return -1;
     }
     
-    if (nds_del(db, key->ptr) < 0) {
-        rv = -1;
-    }
+    rv = nds_del(ndsdb, key->ptr);
+    
+    nds_close(ndsdb);
 
     return rv;
 }
 
 /* Return 0/1 based on a key's existence in NDS. */
 int existsNDS(redisDb *db, robj *key) {
-    return nds_exists(db, key->ptr);
+    NDSDB *ndsdb = nds_open(db, 0);
+    int rv;
+    
+    redisLog(REDIS_DEBUG, "Checking for existence of %s in NDS", key->ptr);
+    
+    if (!ndsdb) {
+        return -1;
+    }
+    
+    rv = nds_exists(ndsdb, key->ptr);
+    nds_close(ndsdb);
+    
+    return rv;
 }
 
 /* Walk the entire keyspace of an NDS database, calling walkerCallback for
@@ -379,48 +404,49 @@ int walkNDS(redisDb *db,
             int (*walkerCallback)(void *, robj *),
             void *data,
             int interrupt_rate) {
-    KCCUR *cur = NULL;
-    KCDB *kcdb = NULL;
-    char *dbkey;
-    int rv = REDIS_OK, counter = 0;
+    MDB_cursor *cur = NULL;
+    NDSDB *ndsdb = NULL;
+    MDB_val key, val;
+    int rv, counter = 0;
     
-    kcdb = nds_open(db, 0);
-    if (!kcdb) {
+    ndsdb = nds_open(db, 0);
+    if (!ndsdb) {
+        rv = REDIS_ERR;
         goto cleanup;
     }
     
-    cur = kcdbcursor(kcdb);
-    if (!kccurjump(cur) && kcdbecode(kcdb) != KCENOREC) {
-        redisLog(REDIS_WARNING, "Failed to go to beginning of the keyspace: %s", kcecodename(kcdbecode(kcdb)));
+    rv = mdb_cursor_open(ndsdb->txn, ndsdb->dbi, &cur);
+    if (rv) {
+        redisLog(REDIS_WARNING, "Failed to open MDB cursor: %s", mdb_strerror(rv));
+        rv = REDIS_ERR;
+        goto cleanup;
     }
     
     redisLog(REDIS_DEBUG, "Walking the NDS keyspace for DB %i", db->id);
     
-    do {
-        size_t dbkeysize;
-        
-        dbkey = kccurgetkey(cur, &dbkeysize, 1);
-        if (dbkey) {
-            robj *key = createStringObject(dbkey, dbkeysize);
-            kcfree(dbkey);
-            if (key && walkerCallback(data, key) == REDIS_ERR) {
-                redisLog(REDIS_DEBUG, "walkNDS terminated prematurely at callback's request");
-                dbkey = NULL;
-                rv = REDIS_ERR;
-            }
-            if (key) decrRefCount(key);
+    while ((rv = mdb_cursor_get(cur, &key, &val, MDB_NEXT)) == 0) {
+        robj *kobj = createStringObject(key.mv_data, key.mv_size);
+
+        if (kobj && walkerCallback(data, kobj) == REDIS_ERR) {
+            redisLog(REDIS_DEBUG, "walkNDS terminated prematurely at callback's request");
+            rv = REDIS_ERR;
+            if (kobj) decrRefCount(kobj);
+            goto cleanup;
         }
+
+        if (kobj) decrRefCount(kobj);
+
         if (interrupt_rate > 0 && !(++counter % interrupt_rate)) {
             /* Let other clients have a sniff */
             aeProcessEvents(server.el, AE_FILE_EVENTS|AE_DONT_WAIT);
         }
-    } while (dbkey);
+    }
     
 cleanup:
     if (cur) {
-        kccurdel(cur);
+        mdb_cursor_close(cur);
     }
-    nds_close(kcdb);
+    nds_close(ndsdb);
     
     return rv;
 }
@@ -523,6 +549,9 @@ int backgroundDirtyKeysFlush() {
     }
     
     server.dirty_before_bgsave = server.dirty;
+    
+    mdb_env_close(server.mdb_env);
+    server.mdb_env = NULL;
 
     if ((childpid = fork()) == 0) {
         int retval;
@@ -562,241 +591,59 @@ int backgroundDirtyKeysFlush() {
     return REDIS_ERR;
 }
 
-typedef struct {
-    redisDb *db;
-    KCDB *kcdb;
-} defragWalkerData;
-
-int defragWalker(void *data, robj *key) {
-    defragWalkerData *wdata = data;
-    sds valstr = nds_get(wdata->db, key->ptr);
-    int rv = REDIS_OK;
-
-    if (!kcdbset(wdata->kcdb, key->ptr, sdslen(key->ptr), valstr, sdslen(valstr))) {
-        redisLog(REDIS_WARNING, "Failed to write key %s to defrag DB: %s", key->ptr, kcecodename(kcdbecode(wdata->kcdb)));
-        rv = REDIS_ERR;
-    }
-    
-    sdsfree(valstr);
-    return rv;
-}
-
 int flushDirtyKeys() {
     redisLog(REDIS_DEBUG, "Flushing dirty keys");
     for (int j = 0; j < server.dbnum; j++) {
         redisDb *db = server.db+j;
         dictIterator *di;
         dictEntry *deKey, *deVal;
-        sds *keys;
-        sds *vals;
-        int nkeys = dictSize(db->dirty_keys);
-        int i = 0;
+        NDSDB *ndsdb;
+
+        redisLog(REDIS_DEBUG, "Flushing %i keys for DB %i", dictSize(db->dirty_keys), j);
         
-        if (nkeys == 0) continue;
-
-        redisLog(REDIS_DEBUG, "Planning on flushing up to %i keys to disk for DB %i", nkeys, db->id);
-
-        keys = zmalloc(nkeys * sizeof(sds));
-        if (!keys) {
-            return REDIS_ERR;
-        }
-        vals = zmalloc(nkeys * sizeof(sds));
-        if (!vals) {
-            zfree(keys);
+        if (!ndsdb) {
             return REDIS_ERR;
         }
         
+        if (dictSize(db->dirty_keys) == 0) continue;
+
         di = dictGetSafeIterator(db->dirty_keys);
         if (!di) {
             redisLog(REDIS_WARNING, "dictGetSafeIterator failed");
-            zfree(keys);
-            zfree(vals);
             return REDIS_ERR;
         }
-        
+
+	ndsdb = nds_open(db, 1);        
         while ((deKey = dictNext(di)) != NULL) {
             rio payload;
             sds keystr = dictGetKey(deKey);
             deVal = dictFind(db->dict, keystr);
             if (!deVal) {
-                /* Key must have been deleted after it got dirtied.  Put it on
-                 * the end of the key list for deletion later. */
-                nkeys--;
-                keys[nkeys] = keystr;
+                /* Key must have been deleted after it got dirtied.  NUKE IT! */
+                nds_del(ndsdb, keystr);
             } else {
                 createDumpPayload(&payload, dictGetVal(deVal));
-                keys[i] = keystr;
-                vals[i] = payload.io.buffer.ptr;
-                i++;
+                nds_set(ndsdb, keystr, payload.io.buffer.ptr);
+                sdsfree(payload.io.buffer.ptr);
             }
         }
-
-        i = nds_bulk_put(db, keys, vals, nkeys);
-
-        if (i < 0) {
-            /* I don't want to know... */
-            return REDIS_ERR;
-        } else if (nkeys == i) {
-            redisLog(REDIS_DEBUG, "Flushed %i keys for DB %i", i, db->id);
-        } else {
-            redisLog(REDIS_WARNING, "Can't happen: flushed a short batch of keys (expected %i, actually flushed %i)", nkeys, i);
-        }
         
-        if (dictSize(db->dirty_keys) > nkeys) {
-            nds_bulk_del(db, keys+nkeys, dictSize(db->dirty_keys) - nkeys);
-        }
-        
-        /* Cleanup.  We only walk vals up to nkeys because all the other
-         * vals entries will be empty, because they correspond to deleted
-         * keys, which -- funnily enough -- don't have values!  We also
-         * don't have to cleanup the elements of keys, because they're just
-         * copies of the pointers that are in db->dirty_keys, which get
-         * free()d by dictEmpty() somewhere else. */
-        for (i = 0; i < nkeys; i++) {
-            if (vals[i]) {
-                sdsfree(vals[i]);
-            }
-        }
-        zfree(keys);
-        zfree(vals);
+        nds_close(ndsdb);
     }
     
     redisLog(REDIS_DEBUG, "Flush complete");
 
-    /* Some of the things we do down below use nds_get(), which returns NULL if
-     * the key is considered dirty.  Since all keys are now clean, we can clear
-     * the dirty lists.  When this is running in a child process, the parent
-     * will also have to clean its lists separately (because we can't reach out
-     * and touch them from the child). */
-    for (int i = 0; i < server.dbnum; i++) {
-        redisDb *db = server.db+i;
-        dictEmpty(db->dirty_keys);
-    }
-    
-    /* Since we're doing so much disk I/O anyway, and because it's best to
-     * have a nice, clean, minimalist database to snapshot, we always defrag
-     * before we take a snapshot. */
-    if (server.nds_defrag_in_progress || server.nds_snapshot_in_progress) {
-    	redisLog(REDIS_NOTICE, "Defragmenting NDS");
-        /* Let's clean up some disk space, fellas! */
-        for (int i = 0; i < server.dbnum; i++) {
-            redisDb *db = server.db+i;
-            char freezer_name[FREEZER_FILENAME_LEN], temp_name[FREEZER_FILENAME_LEN];
-            KCDB *tempdb = NULL;
-            int move_into_place = 0;
-            defragWalkerData wdata;
-            
-            redisLog(REDIS_DEBUG, "Defragmenting DB %i", i);
-            
-            freezer_filename(db, freezer_name, 0);
-            snprintf(temp_name, FREEZER_FILENAME_LEN-1, "temp-%u-%i-%i.kch", (unsigned int)time(NULL), getpid(), i);
-            
-            tempdb = kcdbnew();
-            if (!tempdb) {
-                goto per_db_defrag_cleanup;
-            }
-            
-            if (!kcdbopen(tempdb, temp_name, KCOWRITER | KCOCREATE)) {
-                redisLog(REDIS_WARNING, "Failed to open the defrag temp for DB %i: %s", i, kcecodename(kcdbecode(tempdb)));
-                goto per_db_defrag_cleanup;
-            }
-
-            wdata.db = db;
-            wdata.kcdb = tempdb;
-            if (walkNDS(db, defragWalker, &wdata, 0) == REDIS_OK) {
-                move_into_place = 1;
-            }
-
-per_db_defrag_cleanup:
-            if (tempdb) {
-                if (!kcdbclose(tempdb)) {
-                    redisLog(REDIS_WARNING, "Failed to close the defrag dest: %s", kcecodename(kcdbecode(tempdb)));
-                }
-                kcdbdel(tempdb);
-            }
-            
-            if (move_into_place) {
-                rename(temp_name, freezer_name);
-            } else {
-                unlink(temp_name);
-            }
-        }
-    }
-                
-    
     if (server.nds_snapshot_in_progress) {
+    	int rv;
+
+    	nds_init();
+    	
         /* Woohoo!  Snapshot time! */
-        for (int i = 0; i < server.dbnum; i++) {
-            FILE *src = NULL, *dst = NULL;
-            char buf[65536], fname[1024];
-            int sz = 0, rv = 0;
-            
-            snprintf(fname, 1023, "freezer_%i.kch", i);
-            redisLog(REDIS_DEBUG, "Snapshotting %s", fname);
-            src = fopen(fname, "r");
-            if (!src) {
-                if (errno == ENOENT) {
-                    /* That's OK; just means we've never touched this DB */
-                    goto per_db_snapshot_cleanup;
-                }
-                redisLog(REDIS_WARNING, "Failed to open %s for reading in snapshot: %s", fname, strerror(errno));
-                rv = REDIS_ERR;
-                goto per_db_snapshot_cleanup;
-            }
-
-            snprintf(fname, 1023, "snapshot_%i.kch", i);
-            dst = fopen(fname, "w");
-            if (!dst) {
-                redisLog(REDIS_WARNING, "Failed to open %s for writing in snapshot: %s", fname, strerror(errno));
-                rv = REDIS_ERR;
-                goto per_db_snapshot_cleanup;
-            }
-            
-            while (1) {
-                sz = fread(buf, 1, 65536, src);
-                if (fwrite(buf, 1, sz, dst) != sz) {
-                    redisLog(REDIS_WARNING, "Failed to write to %s during snapshot: %s", fname, strerror(errno));
-                    rv = REDIS_ERR;
-                    goto per_db_snapshot_cleanup;
-                }
-
-                if (sz < 65536) {
-                    if (feof(src)) {
-                        /* Well, that's OK then */
-                        redisLog(REDIS_DEBUG, "Successfully snapshot to %s", fname);
-                        rv = REDIS_OK;
-                        if (server.nds_compress_snapshots) {
-                            char cmd[1024];
-                            snprintf(cmd, 1023, "gzip -f %s", fname);
-                            system(cmd);
-                        }
-                        goto per_db_snapshot_cleanup;
-                    } else if (ferror(src)) {
-                        /* Not so cool */
-                        redisLog(REDIS_WARNING, "Read failed during snapshot of NDS DB %i: %s", i, strerror(errno));
-                        rv = REDIS_ERR;
-                        goto per_db_snapshot_cleanup;
-                    } else {
-                        /* Just for completeness sake; I don't think this can happen */
-                        redisLog(REDIS_WARNING, "CAN'T HAPPEN during snapshot of NDS DB %i", i);
-                        rv = REDIS_ERR;
-                        goto per_db_snapshot_cleanup;
-                    }
-                }
-            }
-
-per_db_snapshot_cleanup:
-            if (src) {
-                fclose(src);
-                src = NULL;
-            }
-            if (dst) {
-                fclose(dst);
-                dst = NULL;
-            }
-            if (rv == REDIS_ERR) {
-                return REDIS_ERR;
-            }
+        system("rm -rf ./snapshot");
+        system("mkdir -p ./snapshot");
+        
+        if ((rv = mdb_env_copy(server.mdb_env, "./snapshot"))) {
+            redisLog(REDIS_WARNING, "Snapshot failed: %s", mdb_strerror(rv));
         }
     }
                 
@@ -807,7 +654,6 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
     redisLog(REDIS_NOTICE, "NDS background save completed.  exitcode=%i, bysignal=%i", exitcode, bysignal);
 
     server.nds_snapshot_in_progress = 0;
-    server.nds_defrag_in_progress = 0;
 
     if (exitcode == 0 && bysignal == 0) {
         for (int i = 0; i < server.dbnum; i++) {
@@ -848,8 +694,6 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
         if (server.nds_bg_requestor) {
             if (server.nds_snapshot_in_progress) {
                 addReplyError(server.nds_bg_requestor, "NDS SNAPSHOT failed in child; consult logs for details");
-            } else if (server.nds_defrag_in_progress) {
-                addReplyError(server.nds_bg_requestor, "NDS DEFRAG failed in child; consult logs for details");
             } else if (server.nds_bg_requestor) {
                 addReplyError(server.nds_bg_requestor, "NDS FLUSH failed in child; consult logs for details");
             }
@@ -859,14 +703,12 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
         
     server.nds_child_pid = -1;
     
-    if (server.nds_snapshot_pending || server.nds_defrag_pending) {
-        /* Trigger a defrag/snapshot job now */
+    if (server.nds_snapshot_pending) {
+        /* Trigger a snapshot job now */
         server.nds_snapshot_in_progress = server.nds_snapshot_pending;
-        server.nds_defrag_in_progress = server.nds_defrag_pending;
         server.nds_snapshot_pending = 0;
-        server.nds_defrag_pending = 0;
         if (backgroundDirtyKeysFlush() == REDIS_ERR) {
-            addReplyError(server.nds_bg_requestor, "Delayed NDS SNAPSHOT/DEFRAG failed; consult logs for details");
+            addReplyError(server.nds_bg_requestor, "Delayed NDS SNAPSHOT failed; consult logs for details");
             return;
         }
     }
@@ -917,33 +759,6 @@ void ndsFlushCommand(redisClient *c) {
     }
 }
 
-void ndsDefragCommand(redisClient *c) {
-    if (server.nds_defrag_pending || server.nds_defrag_in_progress) {
-        addReplyError(c, "NDS DEFRAG already in progress");
-        return;
-    }
-        
-    if (server.nds_bg_requestor) {
-        addReplyError(c, "NDS background operation already in progress");
-        return;
-    }
-
-    server.nds_bg_requestor = c;
-    
-    if (server.nds_child_pid == -1) {
-        server.nds_defrag_in_progress = 1;
-        if (backgroundDirtyKeysFlush() == REDIS_ERR) {
-            addReplyError(c, "NDS DEFRAG failed to start; consult logs for details");
-            server.nds_bg_requestor = NULL;
-            return;
-        }
-    } else {
-        /* A regular (non-defrag) NDS flush is already in progress; we'll
-         * have to do our defrag later */
-        server.nds_defrag_pending = 1;
-    }
-}
-
 void ndsSnapshotCommand(redisClient *c) {
     if (server.nds_snapshot_pending || server.nds_snapshot_in_progress) {
         addReplyError(c, "NDS SNAPSHOT already in progress");
@@ -986,13 +801,6 @@ void ndsCommand(redisClient *c) {
         /* We don't want to send an OK immediately; that'll get sent when the
          * flush completes */
         return;
-    } else if (!strcasecmp(c->argv[1]->ptr,"defrag")) {
-        if (c->argc != 2) goto badarity;
-        redisLog(REDIS_NOTICE, "NDS DEFRAG requested");
-        ndsDefragCommand(c);
-        /* We don't want to send an OK immediately; that'll get sent when the
-         * defrag completes */
-        return;
     } else if (!strcasecmp(c->argv[1]->ptr,"clearstats")) {
         if (c->argc != 2) goto badarity;
         redisLog(REDIS_NOTICE, "NDS CLEARSTATS requested");
@@ -1004,7 +812,7 @@ void ndsCommand(redisClient *c) {
         preloadNDS();
     } else {
         addReplyError(c,
-            "NDS subcommand must be one of: SNAPSHOT FLUSH CLEARSTATS PRELOAD DEFRAG");
+            "NDS subcommand must be one of: SNAPSHOT FLUSH CLEARSTATS PRELOAD");
         return;
     }
     addReply(c, shared.ok);
