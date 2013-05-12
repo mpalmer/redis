@@ -786,6 +786,25 @@ void ndsSnapshotCommand(redisClient *c) {
     }
 }
 
+void ndsMemkeysCommand(redisClient *c) {
+    void *rlen = addDeferredMultiBulkLength(c);
+    dictIterator *di = dictGetSafeIterator(c->db->dict);
+    dictEntry *de;
+    int numkeys = 0;
+    
+    di = dictGetSafeIterator(c->db->dict);
+    
+    while ((de = dictNext(di)) != NULL) {
+        sds key = dictGetKey(de);
+        robj *keyobj = createStringObject(key, sdslen(key));
+        
+        addReplyBulk(c, keyobj);
+        decrRefCount(keyobj);
+        numkeys++;
+    }
+    setDeferredMultiBulkLength(c, rlen, numkeys);
+}
+
 void ndsCommand(redisClient *c) {
     if (!strcasecmp(c->argv[1]->ptr,"snapshot")) {
         if (c->argc != 2) goto badarity;
@@ -810,9 +829,16 @@ void ndsCommand(redisClient *c) {
         if (c->argc != 2) goto badarity;
         redisLog(REDIS_NOTICE, "NDS PRELOAD requested");
         preloadNDS();
+    } else if (!strcasecmp(c->argv[1]->ptr,"memkeys")) {
+        if (c->argc != 2) goto badarity;
+        redisLog(REDIS_NOTICE, "NDS MEMKEYS requested");
+        ndsMemkeysCommand(c);
+        /* We don't want to send an OK; the response gets sent by the command
+         * handler. */
+        return;
     } else {
         addReplyError(c,
-            "NDS subcommand must be one of: SNAPSHOT FLUSH CLEARSTATS PRELOAD");
+            "NDS subcommand must be one of: SNAPSHOT FLUSH CLEARSTATS PRELOAD MEMKEYS");
         return;
     }
     addReply(c, shared.ok);
