@@ -35,6 +35,8 @@
 
 #include <stdio.h>
 #include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #include <sys/time.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
@@ -53,47 +55,6 @@ static void freezer_filename(redisDb *db, char *buf) {
     snprintf(buf, FREEZER_FILENAME_LEN-1,
              "freezer_%i",
              db->id);
-}
-
-static int nds_init() {
-    int rv = 0;
-    
-    if (server.mdb_env) {
-        return REDIS_OK;
-    }
-
-    redisLog(REDIS_DEBUG, "initialising mdb_env");
-
-    if ((rv = mdb_env_create(&server.mdb_env))) {
-        redisLog(REDIS_WARNING, "mdb_env_create() failed: %s", mdb_strerror(rv));
-        server.mdb_env = NULL;
-        return REDIS_ERR;
-    }
-    
-    if ((rv = mdb_env_set_mapsize(server.mdb_env, (size_t)1048576*1048576))) {  /* 1TB! */
-        redisLog(REDIS_WARNING, "mdb_env_set_mapsize() failed: %s", mdb_strerror(rv));
-        mdb_env_close(server.mdb_env);
-        server.mdb_env = NULL;
-        return REDIS_ERR;
-    }
-    
-    if ((rv = mdb_env_set_maxdbs(server.mdb_env, server.dbnum))) {
-        redisLog(REDIS_WARNING, "mdb_env_set_maxdbs() failed: %s", mdb_strerror(rv));
-        mdb_env_close(server.mdb_env);
-        server.mdb_env = NULL;
-        return REDIS_ERR;
-    }
-    
-    if ((rv = mdb_env_open(server.mdb_env, ".", 0, 0644))) {
-        redisLog(REDIS_WARNING, "mdb_env_open() failed: %s", mdb_strerror(rv));
-        mdb_env_close(server.mdb_env);
-        server.mdb_env = NULL;
-        return REDIS_ERR;
-    }
-    
-    redisLog(REDIS_DEBUG, "mdb_env initialised");
-    
-    return REDIS_OK;
 }
 
 /* Close an NDS database. */
@@ -123,8 +84,80 @@ static NDSDB *nds_open(redisDb *db, int writer) {
     NDSDB *ndsdb;
     int rv;
     
-    if (nds_init() == REDIS_ERR) {
+    
+    if (!server.mdb_env) {
+        struct stat statbuf;
+        unsigned long long mapsize = 0;
+
+        redisLog(REDIS_DEBUG, "initialising mdb_env");
+
+        /* There's a bit of hinkyness in MDB.  First off, if your database
+         * doesn't already exist, you need to open the database in
+         * read-write mode, otherwise it doesn't get created (OK, that
+         * *sorta* makes sense).  The thing that *really* fluffs my muffin,
+         * though, is that you need to set a "map size" when you open the
+         * database for writing, because...  well, I don't really know. 
+         * Seems that MDB doesn't handle change well.  The problem with just
+         * setting the mapsize to something REALLY HUEG is that MDB wants to
+         * mmap all that space, and mmaping a TB of virtual memory takes a
+         * long time -- which makes flushes stupidly slow.
+         *
+         * So, we try to stat the datafile.  If that fails because the
+         * datafile doesn't exist, we enable writer mode, because we'll be
+         * creating the database.  Then we set the mapsize to the current
+         * size of the file plus 100MB, rounded up to the nearest page size.
+         * to the 2x the file's size, or 2GB (whichever is larger).  This should
+         * ensure that we have a suitably huge amount of spare map space
+         * (PUTs fail if we don't have enough a large enough map, which is
+         * something of a tragedy).
+         */
+        if (stat("data.mdb", &statbuf) == -1) {
+            if (errno == ENOENT) {
+                writer = 1;
+                mapsize = 100*1024*1024;
+            } else {
+                redisLog(REDIS_WARNING, "stat(data.mdb) failed: %s", strerror(errno));
+                goto mdb_env_cleanup;
+            }
+        } else {
+            mapsize = statbuf.st_size + 100*1024*1024;
+        }
+        
+        mapsize = (mapsize / sysconf(_SC_PAGESIZE)) * sysconf(_SC_PAGESIZE);
+        
+        redisLog(REDIS_DEBUG, "Setting mapsize to %llu", mapsize);
+                    
+        if ((rv = mdb_env_create(&server.mdb_env))) {
+            redisLog(REDIS_WARNING, "mdb_env_create() failed: %s", mdb_strerror(rv));
+            server.mdb_env = NULL;
+            goto mdb_env_cleanup;
+        }
+        
+        if ((rv = mdb_env_set_mapsize(server.mdb_env, mapsize))) {
+            redisLog(REDIS_WARNING, "mdb_env_set_mapsize() failed: %s", mdb_strerror(rv));
+        }
+        
+        if ((rv = mdb_env_set_maxdbs(server.mdb_env, server.dbnum))) {
+            redisLog(REDIS_WARNING, "mdb_env_set_maxdbs() failed: %s", mdb_strerror(rv));
+            goto mdb_env_cleanup;
+        }
+        
+        if ((rv = mdb_env_open(server.mdb_env, ".", writer ? 0 : MDB_RDONLY, 0644))) {
+            redisLog(REDIS_WARNING, "mdb_env_open() failed: %s", mdb_strerror(rv));
+            goto mdb_env_cleanup;
+        }
+        
+        goto success;
+        
+mdb_env_cleanup:
+        if (server.mdb_env) {
+            mdb_env_close(server.mdb_env);
+            server.mdb_env = NULL;
+        }
         return NULL;
+
+success:
+        redisLog(REDIS_DEBUG, "mdb_env initialised");
     }
     
     ndsdb = zmalloc(sizeof(NDSDB));
@@ -137,8 +170,8 @@ static NDSDB *nds_open(redisDb *db, int writer) {
     
     freezer_filename(db, db_name);
     
-    if ((rv = mdb_txn_begin(server.mdb_env, NULL, 0, &(ndsdb->txn)))) {
-        redisLog(REDIS_WARNING, "Failed to open the freezer for DB %i: %s", db->id, mdb_strerror(rv));
+    if ((rv = mdb_txn_begin(server.mdb_env, NULL, writer ? 0 : MDB_RDONLY, &(ndsdb->txn)))) {
+        redisLog(REDIS_WARNING, "Failed to begin a txn: %s", mdb_strerror(rv));
         goto err_cleanup;
     }
     
@@ -636,8 +669,6 @@ int flushDirtyKeys() {
     if (server.nds_snapshot_in_progress) {
     	int rv;
 
-    	nds_init();
-    	
         /* Woohoo!  Snapshot time! */
         system("rm -rf ./snapshot");
         system("mkdir -p ./snapshot");
