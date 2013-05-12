@@ -1,3 +1,11 @@
+redis (2:2.6.12-0anchor8) wheezy; urgency=low
+
+  * Bunchteen improvements to NDS, including switching from KyotoCabinet to
+    LightningDB.  This is NOT a backwards-compatible change; manual
+    migration from KC to LMDB will be required.
+
+ -- Matt Palmer <mpalmer@debian.org>  Sun, 12 May 2013 20:03:42 +1000
+
 redis (2:2.6.12-0anchor7) squeeze; urgency=low
 
   * Bugfixes around NDS FLUSH/NDS SNAPSHOT
