@@ -458,7 +458,7 @@ size_t keyCountNDS(redisDb *db) {
     redisLog(REDIS_DEBUG, "Counting keys in NDS DB %i", db->id);
     
     if (!ndsdb) {
-        return -1;
+        return 0;
     }
     
     if ((rv = mdb_env_stat(server.mdb_env, &stats))) {
