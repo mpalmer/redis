@@ -43,10 +43,16 @@
 
 #define FREEZER_FILENAME_LEN 255
 
+/* Ripped wholesale from mdb.c */
+#define MDB_MAXKEYSIZE 511
+#define MDB_MAXDATASIZE 0xffffffffUL
+
 typedef struct {
 	MDB_txn *txn;
 	MDB_dbi dbi;
 	redisDb *rdb;
+	char db_name[FREEZER_FILENAME_LEN];
+	unsigned int txn_count;
 } NDSDB;
 
 /* Generate the name of the freezer we want, based on the database passed
@@ -80,7 +86,6 @@ static void nds_close(NDSDB *ndsdb) {
  * functions, or NULL on failure.
  */
 static NDSDB *nds_open(redisDb *db, int writer) {
-    char db_name[FREEZER_FILENAME_LEN];
     NDSDB *ndsdb;
     int rv;
     
@@ -105,24 +110,28 @@ static NDSDB *nds_open(redisDb *db, int writer) {
          * So, we try to stat the datafile.  If that fails because the
          * datafile doesn't exist, we enable writer mode, because we'll be
          * creating the database.  Then we set the mapsize to the current
-         * size of the file plus 100MB, rounded up to the nearest page size.
-         * to the 2x the file's size, or 2GB (whichever is larger).  This should
-         * ensure that we have a suitably huge amount of spare map space
-         * (PUTs fail if we don't have enough a large enough map, which is
-         * something of a tragedy).
+         * size of the file plus 1MB per key in the dirty keys set, rounded
+         * up to the nearest page size, or 2GB (whichever is larger).  This
+         * should ensure that we have a suitably huge amount of spare map
+         * space (PUTs fail if we don't have enough a large enough map,
+         * which is something of a tragedy).
          */
         if (stat("data.mdb", &statbuf) == -1) {
             if (errno == ENOENT) {
+                redisLog(REDIS_DEBUG, "data.mdb doesn't exist; creating");
                 writer = 1;
                 mapsize = 100*1024*1024;
             } else {
                 redisLog(REDIS_WARNING, "stat(data.mdb) failed: %s", strerror(errno));
                 goto mdb_env_cleanup;
             }
-        } else {
-            mapsize = statbuf.st_size + 100*1024*1024;
+        } else if (writer) {
+            redisLog(REDIS_DEBUG, "data.mdb size is %llu", statbuf.st_size);
+            mapsize = statbuf.st_size + dirtyKeyCount() * 1048576;
         }
         
+        /* Make the mapsize a multiple of the page size, because grumble
+        grumble */
         mapsize = (mapsize / sysconf(_SC_PAGESIZE)) * sysconf(_SC_PAGESIZE);
         
         redisLog(REDIS_DEBUG, "Setting mapsize to %llu", mapsize);
@@ -167,15 +176,16 @@ success:
     }
     ndsdb->txn = NULL;
     ndsdb->rdb = db;
+    ndsdb->txn_count = 0;
     
-    freezer_filename(db, db_name);
+    freezer_filename(db, ndsdb->db_name);
     
     if ((rv = mdb_txn_begin(server.mdb_env, NULL, writer ? 0 : MDB_RDONLY, &(ndsdb->txn)))) {
         redisLog(REDIS_WARNING, "Failed to begin a txn: %s", mdb_strerror(rv));
         goto err_cleanup;
     }
     
-    if ((rv = mdb_dbi_open(ndsdb->txn, db_name, MDB_CREATE, &(ndsdb->dbi)))) {
+    if ((rv = mdb_dbi_open(ndsdb->txn, ndsdb->db_name, MDB_CREATE, &(ndsdb->dbi)))) {
         redisLog(REDIS_WARNING, "Failed to open freezer DBi for DB %i: %s", db->id, mdb_strerror(rv));
         goto err_cleanup;
     }
@@ -206,6 +216,11 @@ static int nds_exists(NDSDB *db, sds key) {
         /* If the key's dirty but you're coming here, then it isn't in
          * memory, so it clearly mustn't exist.  */
         return 0;
+    }
+    
+    if (sdslen(key) > MDB_MAXKEYSIZE) {
+        redisLog(REDIS_WARNING, "Passed excessively long key to nds_exists");
+        return -1;
     }
     
     rv = mdb_get(db->txn, db->dbi, &k, &v);
@@ -240,6 +255,11 @@ static sds nds_get(NDSDB *db, sds key) {
          */
         return NULL;
     }
+    
+    if (sdslen(key) > MDB_MAXKEYSIZE) {
+        redisLog(REDIS_WARNING, "Passed excessively long key to nds_get");
+        return NULL;
+    }
 
     rv = mdb_get(db->txn, db->dbi, &k, &v);
     
@@ -267,26 +287,39 @@ static int nds_set(NDSDB *db, sds key, sds val) {
     v.mv_size = sdslen(val);
     v.mv_data = val;
     
-    rv = mdb_put(db->txn, db->dbi, &k, &v, 0);
+    if (sdslen(key) > MDB_MAXKEYSIZE) {
+        redisLog(REDIS_WARNING, "Passed excessively long key to nds_set");
+        return REDIS_ERR;
+    }
     
-    if (rv == MDB_TXN_FULL) {
-        /* Odd... let's flush this transaction and try one more time */
+    if (sdslen(val) > MDB_MAXDATASIZE) {
+        redisLog(REDIS_WARNING, "Key %s has an excessively long value", key);
+        return REDIS_ERR;
+    }
+    
+    rv = mdb_put(db->txn, db->dbi, &k, &v, 0);
+    db->txn_count++;
+    
+    if (rv) {
+        redisLog(REDIS_WARNING, "mdb_put(%s) failed: %s", key, mdb_strerror(rv));
+        return REDIS_ERR;
+    }
+    
+    if (db->txn_count > 1000) {
+        redisLog(REDIS_NOTICE, "txn full; performing intermediate txn commit");
         rv = mdb_txn_commit(db->txn);
         if (rv) {
             redisLog(REDIS_WARNING, "Failed to commit txn: %s", mdb_strerror(rv));
-            mdb_dbi_close(server.mdb_env, db->dbi);
-            mdb_txn_begin(server.mdb_env, NULL, 0, &(db->txn));
-            mdb_dbi_open(db->txn, NULL, MDB_CREATE, &(db->dbi));
             return REDIS_ERR;
         } else {
-	    return REDIS_OK;
+            db->txn_count = 0;
+            mdb_dbi_close(server.mdb_env, db->dbi);
+            mdb_txn_begin(server.mdb_env, NULL, 0, &(db->txn));
+            mdb_dbi_open(db->txn, db->db_name, 0, &(db->dbi));
 	}
-    } else if (rv) {
-        redisLog(REDIS_WARNING, "mdb_put(%s) failed: %s", key, mdb_strerror(rv));
-        return REDIS_ERR;
-    } else {
-        return REDIS_OK;
     }
+    
+    return REDIS_OK;
 }
 
 /* Deletion time!  Take an NDSDB and a key, and make the key go away.  Tells
@@ -361,13 +394,13 @@ void setNDS(redisDb *db, robj *key, robj *val) {
     
     /* We *can* end up in the situation where setNDS gets called on a key
      * that has been deleted.  Rather than try to special-case that
-     * elsewhere (by checking what we get out of lookupKey(), we'll just
-     * throw our hands in the air and return early if that's the case.
+     * elsewhere (by checking what we get out of lookupKey()), we'll just
+     * throw our hands in the air in here and return early.
      */
     if (!val) {
         return;
     }
-        
+
     redisLog(REDIS_DEBUG, "Writing %s to NDS", (char *)key->ptr);
     
     createDumpPayload(&payload, val);
@@ -639,10 +672,6 @@ int flushDirtyKeys() {
 
         redisLog(REDIS_DEBUG, "Flushing %i keys for DB %i", dictSize(db->dirty_keys), j);
         
-        if (!ndsdb) {
-            return REDIS_ERR;
-        }
-        
         if (dictSize(db->dirty_keys) == 0) continue;
 
         di = dictGetSafeIterator(db->dirty_keys);
@@ -652,16 +681,34 @@ int flushDirtyKeys() {
         }
 
 	ndsdb = nds_open(db, 1);        
+
+        if (!ndsdb) {
+            return REDIS_ERR;
+        }
+        
         while ((deKey = dictNext(di)) != NULL) {
             rio payload;
             sds keystr = dictGetKey(deKey);
             deVal = dictFind(db->dict, keystr);
+
+            if (sdslen(keystr) > MDB_MAXKEYSIZE) {
+                redisLog(REDIS_NOTICE, "Attempted to flush excessively long key: %s", keystr);
+                continue;
+            }
+            
             if (!deVal) {
                 /* Key must have been deleted after it got dirtied.  NUKE IT! */
-                nds_del(ndsdb, keystr);
+                if (nds_del(ndsdb, keystr) == -1) {
+                    redisLog(REDIS_WARNING, "nds_del returned error, flush failed");
+                    return REDIS_ERR;
+                }
             } else {
                 createDumpPayload(&payload, dictGetVal(deVal));
-                nds_set(ndsdb, keystr, payload.io.buffer.ptr);
+                if (nds_set(ndsdb, keystr, payload.io.buffer.ptr) == REDIS_ERR) {
+                    redisLog(REDIS_WARNING, "nds_set returned error, flush failed");
+                    sdsfree(payload.io.buffer.ptr);
+                    return REDIS_ERR;
+                }
                 sdsfree(payload.io.buffer.ptr);
             }
         }
