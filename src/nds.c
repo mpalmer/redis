@@ -311,18 +311,6 @@ static int nds_del(NDSDB *db, sds key) {
     }
 }
 
-static void nds_nuke(redisDb *db) {
-    NDSDB *ndsdb = nds_open(db, 1);
-    
-    if (!ndsdb) {
-        return;
-    }
-    
-    mdb_drop(ndsdb->txn, ndsdb->dbi, 1);
-    
-    nds_close(ndsdb);
-}
-
 robj *getNDS(redisDb *db, robj *key) {
     sds val = NULL;
     rio payload;
@@ -508,13 +496,8 @@ cleanup:
 
 /* Clear all NDS databases */
 void nukeNDSFromOrbit() {
-    redisDb *db;
-    
-    for (int i = 0; i < server.dbnum; i++) {
-        db = server.db+i;
-        
-        nds_nuke(db);
-    }
+    unlink("data.mdb");
+    unlink("lock.mdb");
 }
 
 static int preloadWalker(void *data, robj *key) {
