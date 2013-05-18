@@ -2320,7 +2320,7 @@ sds genRedisInfoString(char *section) {
             keys = dictSize(server.db[j].dict);
             vkeys = dictSize(server.db[j].expires);
             if (server.nds) {
-                ndskeys = keyCountNDS(server.db[j]);
+                ndskeys = keyCountNDS(server.db+j);
             }
             
             if (keys || vkeys || ndskeys) {
