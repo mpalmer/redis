@@ -461,7 +461,7 @@ size_t keyCountNDS(redisDb *db) {
         return 0;
     }
     
-    if ((rv = mdb_env_stat(server.mdb_env, &stats))) {
+    if ((rv = mdb_stat(ndsdb->txn, ndsdb->dbi, &stats))) {
         redisLog(REDIS_DEBUG, "Failed to stat: %s", mdb_strerror(rv));
         nds_close(ndsdb);
         return 0;
