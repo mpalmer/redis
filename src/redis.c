@@ -2310,6 +2310,8 @@ sds genRedisInfoString(char *section) {
 
     /* Key space */
     if (allsections || defsections || !strcasecmp(section,"keyspace")) {
+        size_t ndskeys = 0;
+        
         if (sections++) info = sdscat(info,"\r\n");
         info = sdscatprintf(info, "# Keyspace\r\n");
         for (j = 0; j < server.dbnum; j++) {
@@ -2317,9 +2319,18 @@ sds genRedisInfoString(char *section) {
 
             keys = dictSize(server.db[j].dict);
             vkeys = dictSize(server.db[j].expires);
-            if (keys || vkeys) {
-                info = sdscatprintf(info, "db%d:keys=%lld,expires=%lld\r\n",
-                    j, keys, vkeys);
+            if (server.nds) {
+                ndskeys = keyCountNDS(server.db[j]);
+            }
+            
+            if (keys || vkeys || ndskeys) {
+                char ndskeystr[1024] = "";
+                
+                if (server.nds) {
+                    snprintf(ndskeystr, 1023, ",nds=%lu", ndskeys);
+                }
+                info = sdscatprintf(info, "db%d:keys=%lld,expires=%lld%s\r\n",
+                    j, keys, vkeys, ndskeystr);
             }
         }
     }

@@ -35,27 +35,28 @@
 
 #include "redis.h"
 
-robj *getNDS(redisDb *db, robj *key);
-void  setNDS(redisDb *db, robj *key, robj *val);
-int   delNDS(redisDb *db, robj *key);
-int   existsNDS(redisDb *db, robj *key);
-int   walkNDS(redisDb *db,
-              int (*walkerCallback)(void *data, robj *key),
-              void *data,
-              int interrupt_rate);
-void  preloadNDS();
-void  nukeNDSFromOrbit();
+robj  *getNDS(redisDb *db, robj *key);
+void   setNDS(redisDb *db, robj *key, robj *val);
+int    delNDS(redisDb *db, robj *key);
+int    existsNDS(redisDb *db, robj *key);
+size_t keyCountNDS(redisDb *db);
+int    walkNDS(redisDb *db,
+               int (*walkerCallback)(void *data, robj *key),
+               void *data,
+               int interrupt_rate);
+void   preloadNDS();
+void   nukeNDSFromOrbit();
 
-void  touchDirtyKey(redisDb *db, sds sdskey);
-int   isDirtyKey(redisDb *db, sds sdskey);
+void   touchDirtyKey(redisDb *db, sds sdskey);
+int    isDirtyKey(redisDb *db, sds sdskey);
 
 unsigned long long dirtyKeyCount();
 unsigned long long flushingKeyCount();
 
-int   backgroundDirtyKeysFlush();
-int   flushDirtyKeys();
-void  backgroundNDSFlushDoneHandler();
-void  checkNDSChildComplete();
+int    backgroundDirtyKeysFlush();
+int    flushDirtyKeys();
+void   backgroundNDSFlushDoneHandler();
+void   checkNDSChildComplete();
 
-void  ndsCommand(redisClient *c);
+void   ndsCommand(redisClient *c);
 #endif

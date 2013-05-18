@@ -429,6 +429,28 @@ int existsNDS(redisDb *db, robj *key) {
     return rv;
 }
 
+size_t keyCountNDS(redisDb *db) {
+    NDSDB *ndsdb = nds_open(db, 0);
+    int rv;
+    MDB_stat stats;
+    
+    redisLog(REDIS_DEBUG, "Counting keys in NDS DB %i", db->id);
+    
+    if (!ndsdb) {
+        return -1;
+    }
+    
+    if ((rv = mdb_env_stat(server.mdb_env, &stats))) {
+        redisLog(REDIS_DEBUG, "Failed to stat: %s", mdb_strerror(rv));
+        nds_close(ndsdb);
+        return 0;
+    }
+    
+    nds_close(ndsdb);
+    
+    return stats.ms_entries;
+}
+
 /* Walk the entire keyspace of an NDS database, calling walkerCallback for
  * every key we find.  Pass in 'data' for any callback-specific state you
  * might like to deal with.
