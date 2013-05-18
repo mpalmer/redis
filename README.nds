@@ -131,6 +131,13 @@ Here are the list of things that are known deficiencies in the code:
   full RDB files, probably).  I'll likely leave this for someone who uses
   TTLs on their keys.
 
+* Keys can be no longer than 511 octets in length.  This is a limitation in
+  MDB, and isn't something that can be easily extended.  At present, keys
+  longer than this limit will be stored in memory and can be manipulated,
+  but won't be persisted to disk and hence will be lost across a restart. 
+  I'd like for Redis to return an error on an attempt to manipulate such a
+  long key, but it isn't trivial.
+
 And here are features that might be useful to implement, but aren't bugs as
 such:
 
