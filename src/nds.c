@@ -725,6 +725,15 @@ int flushDirtyKeys() {
         system("rm -rf ./snapshot");
         system("mkdir -p ./snapshot");
         
+        /* Corner-case alert: if we had no keys to flush in any database,
+         * then nds_open() will never have been called, meaning that
+         * server.mdb_env won't have been initialised since it was closed in
+         * backgroundDirtyKeysFlush() before we forked.  Hence, we *may*
+         * need to trigger a quick open to initialise server.mdb_env.  */
+        if (!server.mdb_env) {
+            nds_close(nds_open(server.db, 0));
+        }
+        
         if ((rv = mdb_env_copy(server.mdb_env, "./snapshot"))) {
             redisLog(REDIS_WARNING, "Snapshot failed: %s", mdb_strerror(rv));
         }
