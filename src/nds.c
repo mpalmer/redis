@@ -799,8 +799,9 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
         /* Trigger a snapshot job now */
         server.nds_snapshot_in_progress = server.nds_snapshot_pending;
         server.nds_snapshot_pending = 0;
-        if (backgroundDirtyKeysFlush() == REDIS_ERR) {
+        if (backgroundDirtyKeysFlush() == REDIS_ERR && server.nds_bg_requestor) {
             addReplyError(server.nds_bg_requestor, "Delayed NDS SNAPSHOT failed; consult logs for details");
+            server.nds_bg_requestor = NULL;
             return;
         }
     }
@@ -840,15 +841,14 @@ void ndsFlushCommand(redisClient *c) {
         return;
     }
 
-    server.nds_bg_requestor = c;
-    
     if (server.nds_child_pid == -1) {
         if (backgroundDirtyKeysFlush() == REDIS_ERR) {
             addReplyError(c, "NDS FLUSH failed to start; consult logs for details");
-            server.nds_bg_requestor = NULL;
             return;
         }
     }
+
+    server.nds_bg_requestor = c;
 }
 
 void ndsSnapshotCommand(redisClient *c) {
@@ -862,13 +862,10 @@ void ndsSnapshotCommand(redisClient *c) {
         return;
     }
 
-    server.nds_bg_requestor = c;
-    
     if (server.nds_child_pid == -1) {
         server.nds_snapshot_in_progress = 1;
         if (backgroundDirtyKeysFlush() == REDIS_ERR) {
             addReplyError(c, "NDS SNAPSHOT failed to start; consult logs for details");
-            server.nds_bg_requestor = NULL;
             return;
         }
     } else {
@@ -876,6 +873,8 @@ void ndsSnapshotCommand(redisClient *c) {
          * have to do our snapshot later */
         server.nds_snapshot_pending = 1;
     }
+
+    server.nds_bg_requestor = c;
 }
 
 void ndsMemkeysCommand(redisClient *c) {
