@@ -305,7 +305,7 @@ static int nds_set(NDSDB *db, sds key, sds val) {
         return REDIS_ERR;
     }
     
-    if (db->txn_count > 1000) {
+    if (db->txn_count > 50000) {
         redisLog(REDIS_NOTICE, "txn full; performing intermediate txn commit");
         rv = mdb_txn_commit(db->txn);
         if (rv) {
