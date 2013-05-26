@@ -110,28 +110,27 @@ static NDSDB *nds_open(redisDb *db, int writer) {
          * So, we try to stat the datafile.  If that fails because the
          * datafile doesn't exist, we enable writer mode, because we'll be
          * creating the database.  Then we set the mapsize to the current
-         * size of the file plus 1MB per key in the dirty keys set, rounded
-         * up to the nearest page size, or 2GB (whichever is larger).  This
-         * should ensure that we have a suitably huge amount of spare map
-         * space (PUTs fail if we don't have enough a large enough map,
-         * which is something of a tragedy).
+         * size of the file plus 2MB per key in the dirty keys set, rounded
+         * up to the nearest page size.  This should ensure that we have a
+         * suitably huge amount of spare map space (PUTs fail if we don't
+         * have enough a large enough map, which is something of a tragedy).
          */
         if (stat("data.mdb", &statbuf) == -1) {
             if (errno == ENOENT) {
                 redisLog(REDIS_DEBUG, "data.mdb doesn't exist; creating");
                 writer = 1;
-                mapsize = 100*1024*1024;
+                mapsize = dirtyKeyCount() * 1048576 * 2;
             } else {
                 redisLog(REDIS_WARNING, "stat(data.mdb) failed: %s", strerror(errno));
                 goto mdb_env_cleanup;
             }
         } else if (writer) {
             redisLog(REDIS_DEBUG, "data.mdb size is %llu", statbuf.st_size);
-            mapsize = statbuf.st_size + dirtyKeyCount() * 1048576;
+            mapsize = statbuf.st_size + dirtyKeyCount() * 1048576 * 2;
         }
         
-        /* Make the mapsize a multiple of the page size, because grumble
-        grumble */
+        /* Ensure the mapsize is a multiple of the page size, because
+         * grumble grumble */
         mapsize = (mapsize / sysconf(_SC_PAGESIZE)) * sysconf(_SC_PAGESIZE);
         
         redisLog(REDIS_DEBUG, "Setting mapsize to %llu", mapsize);
