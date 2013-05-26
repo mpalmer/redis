@@ -1,3 +1,10 @@
+redis (2:2.6.12-0anchor9) wheezy; urgency=low
+
+  * Heaps of bugfixes to NDS.  Finally looking like something I can call
+    'stable'.
+
+ -- Matt Palmer <mpalmer@debian.org>  Sun, 26 May 2013 19:10:03 +1000
+
 redis (2:2.6.12-0anchor8) wheezy; urgency=low
 
   * Bunchteen improvements to NDS, including switching from KyotoCabinet to
