@@ -325,10 +325,6 @@ void loadServerConfigFromString(char *config) {
             if ((server.nds_preload = yesnotoi(argv[1])) == -1) {
                 err = "argument must be 'yes' or 'no'"; goto loaderr;
             }
-        } else if (!strcasecmp(argv[0],"nds-compress-snapshots") && argc == 2) {
-            if ((server.nds_compress_snapshots = yesnotoi(argv[1])) == -1) {
-                err = "argument must be 'yes' or 'no'"; goto loaderr;
-            }
         } else if (!strcasecmp(argv[0],"requirepass") && argc == 2) {
             if (strlen(argv[1]) > REDIS_AUTHPASS_MAX_LEN) {
                 err = "Password is longer than REDIS_AUTHPASS_MAX_LEN";
@@ -911,7 +907,6 @@ void configGetCommand(redisClient *c) {
             server.repl_disable_tcp_nodelay);
     config_get_bool_field("nds", server.nds);
     config_get_bool_field("nds-preload", server.nds_preload);
-    config_get_bool_field("nds-compress-snapshots", server.nds_compress_snapshots);
 
     /* Everything we can't handle with macros follows. */
 

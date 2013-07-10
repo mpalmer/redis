@@ -607,7 +607,6 @@ struct redisServer {
     /* NDS persistence */
     int nds;                        /* Enable/disable NDS */
     int nds_preload;                /* Should we load all keys out of NDS on startup? */
-    int nds_compress_snapshots;     /* Should we compress snapshots after making them? */
     int nds_preload_in_progress;    /* Are we currently preloading? */
     int nds_preload_complete;       /* Have we already preloaded? */
     pid_t nds_child_pid;            /* PID of child flushing to NDS */
