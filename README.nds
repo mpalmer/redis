@@ -35,10 +35,10 @@ Conversely, there are a few downsides:
   any keys on startup, the first time each key accessed after startup there
   is a hit to disk to go get the key.
 
-* If you access all your keys regularly, performance will suck.  If your
-  "active set" of keys is larger than the memory you choose to use,
-  performance will always be poor because redis will constantly be pulling
-  keys off disk.
+* If your "hot set" of keys is larger than the amount of memory you choose
+  to allow Redis to use, performance will suck.  This shouldn't be news to
+  anyone, though.  NDS is awesome, but it isn't magic.  You may just need to
+  give it more memory.
 
 
 DEPLOYING
