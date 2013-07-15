@@ -74,7 +74,7 @@ its ability to maintain only a subset of keys in memory:
 * `maxmemory` -- assuming you want to use NDS to keep your redis memory
   usage under control, set `maxmemory` to whatever you want to keep your
   memory usage to.  You could just use NDS for quick startup and frequent,
-  disk-efficient persistence, in which case you can leave `maxmemory` alone.
+  IO-efficient persistence, in which case you can leave `maxmemory` alone.
 
 * `maxmemory-policy` -- you want to set this to `allkeys-lru`, to ensure
   that the most frequently used keys are kept in memory and the least-used
