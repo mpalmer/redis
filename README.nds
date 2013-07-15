@@ -43,8 +43,9 @@ Conversely, there are a few downsides:
 
 DEPLOYING
 
-Install the kyotocabinet development files (libkyotocabinet-dev on
-Debian-like systems), then build as normal.
+If you've checked out my git repo, you can just build it as normal. 
+Otherwise, you'll have to patch whatever source tree you're using with the
+changes from my git repo.
 
 There are three new configuration parameters available:
 
