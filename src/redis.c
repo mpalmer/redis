@@ -2576,20 +2576,17 @@ int freeMemoryIfNeeded() {
             /* We didn't manage to free enough memory!  If we're using NDS
              * (and thus may have dirty keys hogging up all our memory)
              * we can trigger a flush of those dirty keys, and then at
-             * worst, just let our memory balloon out */
+             * least we'll eventually get our memory back -- but in the
+             * meantime, we'll still want to deny writes, to avoid memory
+             * usage ballooning any further */
             if (server.nds) {
                 if (server.nds_child_pid == -1 && backgroundDirtyKeysFlush() == REDIS_ERR) {
                     redisLog(REDIS_WARNING, "Failed to trigger background key flush in freeMemoryIfNeeded.  Urgh.");
                 }
-                
-                /* It's better to let memory balloon, given that we'll be able
-                 * to get it back once the flush finishes, rather than deny
-                 * writes */
-                return REDIS_OK;
             } else {
                 redisLog(REDIS_WARNING, "No keys suitable for eviction");
-                return REDIS_ERR; /* nothing to free... */
             }
+            return REDIS_ERR; /* nothing to free... */
         }
     }
     return REDIS_OK;

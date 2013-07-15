@@ -1256,9 +1256,26 @@ int rdbLoad(char *filename) {
             }
 
             /* It's important to avoid going over memory limits if possible. 
-             * This won't stop RDB import if we go over memory, but it will
-             * help keep memory usage under control.  */
-            freeMemoryIfNeeded();
+             * When using NDS, we will wait until we're under our memory
+             * limit again (that means that the background flush has
+             * finished) before we try to load any more data into memory. 
+             * On the other hand, for non-NDS situations, we'll probably be
+             * throwing out data, but at least we're not exceeding
+             * maxmemory...  */
+            while (freeMemoryIfNeeded() == REDIS_ERR && server.nds) {
+                if (server.nds_child_pid == -1) {
+                    /* Well, this is a problem.  We're not running a flush,
+                     * so we shouldn't have any (or many) dirty keys that we
+                     * can't drop, and yet freeMemoryIfNeeded() wasn't able
+                     * to get us back underneath maxmemory.  We're going to
+                     * have to bomb out with an error, we can't continue. */
+                    redisLog(REDIS_WARNING, "Memory limit fatally exceeded during RDB load.  Check maxmemory-policy is set to something evictable, and consider increasing maxmemory.  Aborting now.");
+                    exit(1);
+                }
+                nanosleep(100);
+                checkNDSChildComplete();
+                aeProcessEvents(server.el, AE_FILE_EVENTS|AE_DONT_WAIT);
+            }
         }
 
         /* Read type. */
