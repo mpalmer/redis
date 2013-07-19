@@ -1272,7 +1272,7 @@ int rdbLoad(char *filename) {
                     redisLog(REDIS_WARNING, "Memory limit fatally exceeded during RDB load.  Check maxmemory-policy is set to something evictable, and consider increasing maxmemory.  Aborting now.");
                     exit(1);
                 }
-                nanosleep(100);
+                usleep(100);
                 checkNDSChildComplete();
                 aeProcessEvents(server.el, AE_FILE_EVENTS|AE_DONT_WAIT);
             }
