@@ -1,3 +1,15 @@
+redis (2:2.6.12-0anchor11) wheezy squeeze; urgency=low
+
+  * Mute annoying non-error message.
+
+ -- Matt Palmer <mpalmer@debian.org>  Sun, 11 August 2013 17:33:49 +1000
+
+redis (2:2.6.12-0anchor10) wheezy squeeze; urgency=low
+
+  * Improve the memory usage behaviour during RDB load (replication).
+
+ -- Matt Palmer <mpalmer@debian.org>  Sun, 21 July 2013 11:42:37 +1000
+
 redis (2:2.6.12-0anchor9) wheezy; urgency=low
 
   * Heaps of bugfixes to NDS.  Finally looking like something I can call
