@@ -184,9 +184,11 @@ success:
         goto err_cleanup;
     }
     
-    if ((rv = mdb_dbi_open(ndsdb->txn, ndsdb->db_name, MDB_CREATE, &(ndsdb->dbi)))) {
-        redisLog(REDIS_WARNING, "Failed to open freezer DBi for DB %i: %s", db->id, mdb_strerror(rv));
-        goto err_cleanup;
+    if ((rv = mdb_dbi_open(ndsdb->txn, ndsdb->db_name, writer ? MDB_CREATE : 0, &(ndsdb->dbi)))) {
+        if (writer || rv != MDB_NOTFOUND) {
+            redisLog(REDIS_WARNING, "Failed to open freezer DBi for DB %i: %s", db->id, mdb_strerror(rv));
+            goto err_cleanup;
+        }
     }
 
     /* Epic win! */
