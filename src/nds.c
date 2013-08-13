@@ -40,6 +40,7 @@
 #include <sys/time.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
+#include <sys/statvfs.h>
 
 #define FREEZER_FILENAME_LEN 255
 
@@ -92,6 +93,7 @@ static NDSDB *nds_open(redisDb *db, int writer) {
     
     if (!server.mdb_env) {
         struct stat statbuf;
+        struct statvfs statvfsbuf;
         unsigned long long mapsize = 0;
 
         redisLog(REDIS_DEBUG, "initialising mdb_env");
@@ -101,33 +103,35 @@ static NDSDB *nds_open(redisDb *db, int writer) {
          * read-write mode, otherwise it doesn't get created (OK, that
          * *sorta* makes sense).  The thing that *really* fluffs my muffin,
          * though, is that you need to set a "map size" when you open the
-         * database for writing, because...  well, I don't really know. 
-         * Seems that MDB doesn't handle change well.  The problem with just
-         * setting the mapsize to something REALLY HUEG is that MDB wants to
-         * mmap all that space, and mmaping a TB of virtual memory takes a
-         * long time -- which makes flushes stupidly slow.
+         * database for writing, because...  mmap() yada yada.  Seems that
+         * MDB doesn't handle change well.  The least-worst option for
+         * deciding "how big should I make the map size" is just to set it
+         * to the size of the partition we're writing the files to.  Making
+         * it "insanely hueg" (like a PB or so) doesn't work well, because
+         * then the crazy thing tries to mmap a PB of memory, which takes a
+         * little while.
          *
          * So, we try to stat the datafile.  If that fails because the
          * datafile doesn't exist, we enable writer mode, because we'll be
-         * creating the database.  Then we set the mapsize to the current
-         * size of the file plus 2MB per key in the dirty keys set, rounded
-         * up to the nearest page size.  This should ensure that we have a
-         * suitably huge amount of spare map space (PUTs fail if we don't
-         * have enough a large enough map, which is something of a tragedy).
+         * creating the database.  Then we find out how big the partition is
+         * that we're on, and set the map size to that.
          */
         if (stat("data.mdb", &statbuf) == -1) {
             if (errno == ENOENT) {
                 redisLog(REDIS_DEBUG, "data.mdb doesn't exist; creating");
                 writer = 1;
-                mapsize = dirtyKeyCount() * 1048576 * 2;
             } else {
                 redisLog(REDIS_WARNING, "stat(data.mdb) failed: %s", strerror(errno));
                 goto mdb_env_cleanup;
             }
-        } else if (writer) {
-            redisLog(REDIS_DEBUG, "data.mdb size is %llu", statbuf.st_size);
-            mapsize = statbuf.st_size + dirtyKeyCount() * 1048576 * 2;
         }
+        
+        if (statvfs("./data.mdb", &statvfsbuf) == -1) {
+            redisLog(REDIS_WARNING, "statvfs(./data.mdb) failed: %s", strerror(errno));
+            goto mdb_env_cleanup;
+        }
+        
+        mapsize = statvfsbuf.f_blocks * statvfsbuf.f_frsize;
         
         /* Ensure the mapsize is a multiple of the page size, because
          * grumble grumble */
