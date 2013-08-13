@@ -393,51 +393,6 @@ nds_cleanup:
     return obj;
 }
 
-void setNDS(redisDb *db, robj *key, robj *val) {
-    rio payload;
-    NDSDB *ndsdb;
-    
-    /* We *can* end up in the situation where setNDS gets called on a key
-     * that has been deleted.  Rather than try to special-case that
-     * elsewhere (by checking what we get out of lookupKey()), we'll just
-     * throw our hands in the air in here and return early.
-     */
-    if (!val) {
-        return;
-    }
-
-    redisLog(REDIS_DEBUG, "Writing %s to NDS", (char *)key->ptr);
-    
-    createDumpPayload(&payload, val);
-    
-    ndsdb = nds_open(db, 1);
-    if (!ndsdb) {
-        return;
-    }
-    nds_set(ndsdb, key->ptr, payload.io.buffer.ptr);
-    nds_close(ndsdb);
-}
-
-/* Delete a key from the NDS.  Returns 0 if the key wasn't found, or
- * 1 if it was.  -1 is returned on error.
- */
-int delNDS(redisDb *db, robj *key) {
-    NDSDB *ndsdb = nds_open(db, 1);
-    int rv = 0;
-    
-    redisLog(REDIS_DEBUG, "Deleting %s from NDS", (char *)key->ptr);
-    
-    if (!ndsdb) {
-        return -1;
-    }
-    
-    rv = nds_del(ndsdb, key->ptr);
-    
-    nds_close(ndsdb);
-
-    return rv;
-}
-
 /* Return 0/1 based on a key's existence in NDS. */
 int existsNDS(redisDb *db, robj *key) {
     NDSDB *ndsdb = nds_open(db, 0);

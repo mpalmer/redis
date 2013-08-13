@@ -36,8 +36,6 @@
 #include "redis.h"
 
 robj  *getNDS(redisDb *db, robj *key);
-void   setNDS(redisDb *db, robj *key, robj *val);
-int    delNDS(redisDb *db, robj *key);
 int    existsNDS(redisDb *db, robj *key);
 size_t keyCountNDS(redisDb *db);
 int    walkNDS(redisDb *db,
