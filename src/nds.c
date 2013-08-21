@@ -398,7 +398,7 @@ int existsNDS(redisDb *db, robj *key) {
     NDSDB *ndsdb = nds_open(db, 0);
     int rv;
     
-    redisLog(REDIS_DEBUG, "Checking for existence of %s in NDS", key->ptr);
+    redisLog(REDIS_DEBUG, "Checking for existence of %s in NDS", (char *)key->ptr);
     
     if (!ndsdb) {
         return -1;
@@ -408,6 +408,18 @@ int existsNDS(redisDb *db, robj *key) {
     nds_close(ndsdb);
     
     return rv;
+}
+
+/* Remove all keys from an NDS database. */
+int emptyNDS(redisDb *db) {
+    NDSDB *ndsdb = nds_open(db, 1);
+    int rv;
+    
+    if ((rv = mdb_drop(ndsdb->txn, ndsdb->dbi, 0)) != 0) {
+        redisLog(REDIS_WARNING, "Failed to empty DB: %s", mdb_strerror(rv));
+    }
+    
+    return REDIS_OK;
 }
 
 size_t keyCountNDS(redisDb *db) {
@@ -630,7 +642,7 @@ int flushDirtyKeys() {
         dictEntry *deKey, *deVal;
         NDSDB *ndsdb;
 
-        redisLog(REDIS_DEBUG, "Flushing %i keys for DB %i", dictSize(db->dirty_keys), j);
+        redisLog(REDIS_DEBUG, "Flushing %lu keys for DB %i", dictSize(db->dirty_keys), j);
         
         if (dictSize(db->dirty_keys) == 0) continue;
 

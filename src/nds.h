@@ -38,6 +38,7 @@
 robj  *getNDS(redisDb *db, robj *key);
 int    existsNDS(redisDb *db, robj *key);
 size_t keyCountNDS(redisDb *db);
+int    emptyNDS(redisDb *db);
 int    walkNDS(redisDb *db,
                int (*walkerCallback)(void *data, robj *key),
                void *data,

@@ -223,6 +223,9 @@ long long emptyDb() {
         removed += dictSize(server.db[j].dict);
         dictEmpty(server.db[j].dict);
         dictEmpty(server.db[j].expires);
+        if (server.nds) {
+            emptyNDS(&(server.db[j]));
+        }
     }
     return removed;
 }
@@ -263,6 +266,9 @@ void flushdbCommand(redisClient *c) {
     signalFlushedDb(c->db->id);
     dictEmpty(c->db->dict);
     dictEmpty(c->db->expires);
+    if (server.nds) {
+        emptyNDS(c->db);
+    }
     addReply(c,shared.ok);
 }
 
