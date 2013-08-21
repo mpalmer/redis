@@ -1,6 +1,7 @@
 redis (2:2.6.12-0anchor11) wheezy squeeze; urgency=low
 
   * Mute annoying non-error message.
+  * Actually nuke all keys when FLUSH/FLUSHALL called.
 
  -- Matt Palmer <mpalmer@debian.org>  Sun, 11 August 2013 17:33:49 +1000
 
