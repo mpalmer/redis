@@ -1,3 +1,9 @@
+redis (2:2.6.12-0anchor12) squeeze wheezy; urgency=low
+
+  * Fix SIGSEGV-causing error.  Quite important.
+
+ -- Matt Palmer <mpalmer@debian.org>  Thu, 22 Aug 2013 15:43:08 +1000
+
 redis (2:2.6.12-0anchor11) wheezy squeeze; urgency=low
 
   * Mute annoying non-error message.
