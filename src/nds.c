@@ -414,6 +414,11 @@ int existsNDS(redisDb *db, robj *key) {
 int emptyNDS(redisDb *db) {
     NDSDB *ndsdb = nds_open(db, 1);
     int rv;
+
+    if (!ndsdb) {
+        redisLog(REDIS_WARNING, "Failed to open DB %i", db->id);
+        return REDIS_ERR;
+    }
     
     if ((rv = mdb_drop(ndsdb->txn, ndsdb->dbi, 0)) != 0) {
         redisLog(REDIS_WARNING, "Failed to empty DB: %s", mdb_strerror(rv));
