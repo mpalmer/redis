@@ -1,3 +1,10 @@
+redis (2:2.6.12-0anchor13) squeezy wheezy; urgency=low
+
+  * Fix KEYS so it sees all keys.
+  * Fix the MDB maxsize calc so it works on DBs that don't exist yet.
+
+ -- Matt Palmer <mpalmer@debian.org>  Mon, 26 Aug 2013 09:42:41 +1000
+
 redis (2:2.6.12-0anchor12) squeeze wheezy; urgency=low
 
   * Fix SIGSEGV-causing error.  Quite important.
