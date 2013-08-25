@@ -126,8 +126,8 @@ static NDSDB *nds_open(redisDb *db, int writer) {
             }
         }
         
-        if (statvfs("./data.mdb", &statvfsbuf) == -1) {
-            redisLog(REDIS_WARNING, "statvfs(./data.mdb) failed: %s", strerror(errno));
+        if (statvfs(".", &statvfsbuf) == -1) {
+            redisLog(REDIS_WARNING, "statvfs(.) failed: %s", strerror(errno));
             goto mdb_env_cleanup;
         }
         
