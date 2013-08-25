@@ -54,6 +54,7 @@ unsigned long long flushingKeyCount();
 
 int    backgroundDirtyKeysFlush();
 int    flushDirtyKeys();
+void   postNDSFlushCleanup();
 void   backgroundNDSFlushDoneHandler();
 void   checkNDSChildComplete();
 

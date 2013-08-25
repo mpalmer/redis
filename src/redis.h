@@ -622,6 +622,7 @@ struct redisServer {
     unsigned long long stat_nds_flush_success;  /* How many successful flushes we've done */
     unsigned long long stat_nds_flush_failure;  /* How many flushes have failed */
     MDB_env *mdb_env;               /* Global pointer the LMDB 'environment' */
+    int mdb_env_writer;             /* 0/1 for whether mdb_env is open for writing */
     /* Propagation of commands in AOF / replication */
     redisOpArray also_propagate;    /* Additional command to propagate. */
     /* Logging */

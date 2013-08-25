@@ -363,6 +363,22 @@ void keysCommand(redisClient *c) {
 
     if (server.nds) {
         /* Oh my... this could take a while... */
+        
+        /* First we need to flush all dirty keys to disk, because we only
+         * want to have to walk one database */
+        while (server.nds_child_pid != -1) {
+            usleep(100);
+            checkNDSChildComplete();
+        }
+        if (flushDirtyKeys() == REDIS_ERR) {
+            redisLog(REDIS_WARNING, "flushDirtyKeys() failed in KEYS command -- oh my!");
+            addReplyError(c, "NDS flush failed");
+            return;
+        }
+        postNDSFlushCleanup();
+
+        /* Now we can walk the NDS database, safe in the knowledge that all
+         * possible keys exist there for our inspection. */
         walkNDS(c->db, keysCommandWalkerCallback, &w, -1);
     } else {
         dictIterator *di;

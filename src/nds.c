@@ -90,6 +90,11 @@ static NDSDB *nds_open(redisDb *db, int writer) {
     NDSDB *ndsdb;
     int rv;
     
+    /* Re-open the environment if it isn't open in the correct access mode */
+    if (server.mdb_env_writer != writer) {
+        mdb_env_close(server.mdb_env);
+        server.mdb_env = NULL;
+    }
     
     if (!server.mdb_env) {
         struct stat statbuf;
@@ -158,6 +163,8 @@ static NDSDB *nds_open(redisDb *db, int writer) {
             redisLog(REDIS_WARNING, "mdb_env_open() failed: %s", mdb_strerror(rv));
             goto mdb_env_cleanup;
         }
+
+        server.mdb_env_writer = writer;
         
         goto success;
         
@@ -719,19 +726,23 @@ int flushDirtyKeys() {
     return REDIS_OK;
 }
 
+void postNDSFlushCleanup() {
+    for (int i = 0; i < server.dbnum; i++) {
+        redisDb *db = server.db+i;
+        dictEmpty(db->flushing_keys);
+    }
+    server.lastsave = time(NULL);
+    server.stat_nds_flush_success++;
+}
+
 void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
     redisLog(REDIS_NOTICE, "NDS background save completed.  exitcode=%i, bysignal=%i", exitcode, bysignal);
 
     server.nds_snapshot_in_progress = 0;
 
     if (exitcode == 0 && bysignal == 0) {
-        for (int i = 0; i < server.dbnum; i++) {
-            redisDb *db = server.db+i;
-            dictEmpty(db->flushing_keys);
-        }
+        postNDSFlushCleanup();
         server.dirty -= server.dirty_before_bgsave;
-        server.lastsave = time(NULL);
-        server.stat_nds_flush_success++;
         
         if (server.nds_bg_requestor) {
             addReply(server.nds_bg_requestor, shared.ok);
