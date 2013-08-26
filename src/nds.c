@@ -430,7 +430,8 @@ int emptyNDS(redisDb *db) {
     if ((rv = mdb_drop(ndsdb->txn, ndsdb->dbi, 0)) != 0) {
         redisLog(REDIS_WARNING, "Failed to empty DB: %s", mdb_strerror(rv));
     }
-    
+
+    nds_close(ndsdb);
     return REDIS_OK;
 }
 
