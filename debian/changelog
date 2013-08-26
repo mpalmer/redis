@@ -1,4 +1,12 @@
-redis (2:2.6.12-0anchor13) squeezy wheezy; urgency=low
+redis (2:2.6.12-0anchor14) squeeze wheezy; urgency=low
+
+  * Tone down the pointless flailing about being unable to open non-existent
+    MDB databases.
+  * Fix a fairly critical bug in emptyNDS that can result in deadlocks.
+
+ -- Matt Palmer <mpalmer@debian.org>  Tue, 27 Aug 2013 05:15:18 +1000
+
+redis (2:2.6.12-0anchor13) squeeze wheezy; urgency=low
 
   * Fix KEYS so it sees all keys.
   * Fix the MDB maxsize calc so it works on DBs that don't exist yet.
