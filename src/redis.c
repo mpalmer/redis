@@ -2461,12 +2461,26 @@ int freeMemoryIfNeeded() {
         return REDIS_ERR; /* We need to free memory, but policy forbids. */
     }
 
+    /* We need to clear some memory... if we're not already flushing keys, now
+     * would be a very, very good time to do it. */
+    if (server.nds && server.nds_child_pid == -1) {
+        if (backgroundDirtyKeysFlush() == REDIS_ERR) {
+            redisLog(REDIS_WARNING, "Failed to trigger background key flush in freeMemoryIfNeeded.  Urgh.");
+        }
+    }
+
     /* Compute how much memory we need to free. */
     mem_tofree = mem_used - server.maxmemory;
     mem_freed = 0;
 
     while (mem_freed < mem_tofree) {
         int j, k, keys_freed = 0;
+        
+        if (server.nds) {
+            /* We need to do this frequently otherwise the list of dirty
+             * keys will never be updated */
+            checkNDSChildComplete();
+        }
 
         for (j = 0; j < server.dbnum; j++) {
             long bestval = 0; /* just to prevent warning */
@@ -2539,7 +2553,18 @@ int freeMemoryIfNeeded() {
 
             /* Finally remove the selected key, (as long as it isn't dirty, if
              * we're using NDS) */
-            if (bestkey && !isDirtyKey(db, bestkey)) {
+            if (bestkey) {
+                if (server.nds && !isDirtyKey(db, bestkey)) {
+                    /* We don't want to delete a dirty key, but at the same
+                     * time we don't want to spook the !keys_freed check
+                     * below and cause it to scream "OOM!".  So, let's just
+                     * pretend everything's vaguely hunky-dory, and hope
+                     * that the flush that's going on will clear out those
+                     * dirty keys sooner or later.  */
+                    keys_freed++;
+                    continue;
+                }
+                
                 long long delta;
 
                 robj *keyobj = createStringObject(bestkey,sdslen(bestkey));
@@ -2573,19 +2598,7 @@ int freeMemoryIfNeeded() {
             }
         }
         if (!keys_freed) {
-            /* We didn't manage to free enough memory!  If we're using NDS
-             * (and thus may have dirty keys hogging up all our memory)
-             * we can trigger a flush of those dirty keys, and then at
-             * least we'll eventually get our memory back -- but in the
-             * meantime, we'll still want to deny writes, to avoid memory
-             * usage ballooning any further */
-            if (server.nds) {
-                if (server.nds_child_pid == -1 && backgroundDirtyKeysFlush() == REDIS_ERR) {
-                    redisLog(REDIS_WARNING, "Failed to trigger background key flush in freeMemoryIfNeeded.  Urgh.");
-                }
-            } else {
-                redisLog(REDIS_WARNING, "No keys suitable for eviction");
-            }
+            redisLog(REDIS_WARNING, "No keys suitable for eviction");
             return REDIS_ERR; /* nothing to free... */
         }
     }
