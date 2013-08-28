@@ -2577,25 +2577,27 @@ int freeMemoryIfNeeded() {
         return REDIS_ERR; /* We need to free memory, but policy forbids. */
     }
 
-    /* We need to clear some memory... if we're not already flushing keys, now
-     * would be a very, very good time to do it. */
-    if (server.nds && server.nds_child_pid == -1) {
-        if (backgroundDirtyKeysFlush() == REDIS_ERR) {
-            redisLog(REDIS_WARNING, "Failed to trigger background key flush in freeMemoryIfNeeded.  Urgh.");
-        }
-    }
-
     /* Compute how much memory we need to free. */
     mem_tofree = mem_used - server.maxmemory;
     mem_freed = 0;
 
     while (mem_freed < mem_tofree) {
         int j, k, keys_freed = 0;
-        
+
         if (server.nds) {
-            /* We need to do this frequently otherwise the list of dirty
-             * keys will never be updated */
-            checkNDSChildComplete();
+            /* We need to clear some memory... if we're not already flushing keys, now
+             * would be a very, very good time to do it. */
+            if (server.nds_child_pid == -1) {
+                if (backgroundDirtyKeysFlush() == REDIS_ERR) {
+                    redisLog(REDIS_WARNING, "Failed to trigger background key flush in freeMemoryIfNeeded.  Urgh.");
+                    return REDIS_ERR;
+                }
+            }
+            else {
+                /* We need to do this frequently otherwise the list of dirty
+                 * keys will never be updated */
+                checkNDSChildComplete();
+            }
         }
 
         for (j = 0; j < server.dbnum; j++) {
@@ -2670,7 +2672,7 @@ int freeMemoryIfNeeded() {
             /* Finally remove the selected key, (as long as it isn't dirty, if
              * we're using NDS) */
             if (bestkey) {
-                if (server.nds && !isDirtyKey(db, bestkey)) {
+                if (server.nds && isDirtyKey(db, bestkey)) {
                     /* We don't want to delete a dirty key, but at the same
                      * time we don't want to spook the !keys_freed check
                      * below and cause it to scream "OOM!".  So, let's just
