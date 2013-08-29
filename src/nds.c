@@ -548,10 +548,10 @@ void preloadNDS() {
 
 /* Add the key to the dirty keys list if it isn't there already */
 void touchDirtyKey(redisDb *db, sds sdskey) {
-    sds copy = sdsdup(sdskey);
-    dictEntry *de = dictFind(db->dirty_keys, copy);
+    dictEntry *de = dictFind(db->dirty_keys, sdskey);
     
     if (!de) {
+        sds copy = sdsdup(sdskey);
         dictAdd(db->dirty_keys, copy, NULL);
     }
 }
