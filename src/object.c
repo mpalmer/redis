@@ -273,6 +273,7 @@ int isObjectRepresentableAsLongLong(robj *o, long long *llval) {
 robj *tryObjectEncoding(robj *o) {
     long value;
     sds s = o->ptr;
+    size_t len;
 
     if (o->encoding != REDIS_ENCODING_RAW)
         return o; /* Already encoded */
@@ -286,7 +287,27 @@ robj *tryObjectEncoding(robj *o) {
     redisAssertWithInfo(NULL,o,o->type == REDIS_STRING);
 
     /* Check if we can represent this string as a long integer */
-    if (!string2l(s,sdslen(s),&value)) return o;
+    len = sdslen(s);
+    if (len > 21 || !string2l(s,len,&value)) {
+        /* We can't encode the object...
+         *
+         * Do the last try, and at least optimize the SDS string inside
+         * the string object to require little space, in case there
+         * is more than 10% of free space at the end of the SDS string.
+         *
+         * We do that for larger strings, using the arbitrary value
+         * of 32 bytes. This code was backported from the unstable branch
+         * where this is performed when the object is too large to be
+         * encoded as EMBSTR. */
+        if (len > 32 &&
+            o->encoding == REDIS_ENCODING_RAW &&
+            sdsavail(s) > len/10)
+        {
+            o->ptr = sdsRemoveFreeSpace(o->ptr);
+        }
+        /* Return the original object. */
+        return o;
+    }
 
     /* Ok, this object can be encoded...
      *

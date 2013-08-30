@@ -14,6 +14,72 @@ HIGH:     There is a critical bug that may affect a subset of users. Upgrade!
 CRITICAL: There is a critical bug affecting MOST USERS. Upgrade ASAP.
 --------------------------------------------------------------------------------
 
+--[ Redis 2.6.16 ] Release date: 28 Aug 2013
+
+UPGRADE URGENCY: MODERATE.
+
+* [FIX] Stop writes when fork() fails when trying to BGSAVE. BGSAVE errors
+        were trapped only in the case the saving child failed, so the fork()
+        error was no trapped as no child is created at all.
+* [FIX] Fix a serious memory efficiency regression, Redis 2.6.16 is
+        significantly better with large values (>= a few kbytes) and will
+        be able to store two times the amount of data compared to Redis 2.6.15
+        when values are in that range.
+* [FIX] Fixed an issue with Table conversion in the lua-cmsgpack library exposed
+        by the Redis scripting engine.
+* [NEW] DEBUG SDSLEN was introduced to debug memory inefficiencies due to
+        SDS allocation more easily.
+
+--[ Redis 2.6.15 ] Release date: 21 Aug 2013
+
+UPGRADE URGENCY: MODERATE, upgrade ASAP only if you experience issues related to
+                 the expired keys collection algorithm, or if you use the
+                 ZUNIONSTORE command.
+
+* [FIX] Improved expired keys collection algorithm. Even under heavy load keys
+        to be expired can't accumulate because of lack of CPU time.
+* [FIX] Fixed Issue #1240, ZUNIONSTORE could lead to wrong result.
+* [NEW] redis-benchmark improvements.
+* [NEW] dict.c API wrong usage detection.
+
+WARNING: redis-benchmark released with 2.6.15 features non backward compatible
+         change in the way the random arguments are specified, use the --help
+         option for more information.
+
+--[ Redis 2.6.14 ] Release date: 20 Jun 2013
+
+UPGRADE URGENCY: HIGH because of the following two issues:
+    * Lua scripting + Replication + AOF in slaves problem (see Issue #1164).
+    * AOF + expires possible race condition (see Issue #1079).
+
+* [FIX] AOF bug: expire could be removed from key on AOF rewrite.
+* [FIX] Allow writes from scripts called by AOF loading in read-only slaves.
+* [FIX] Sentinel: parse new version of INFO replication output correctly.
+* [NEW] Reset masterauth if an empty string is configured.
+
+--[ Redis 2.6.13 ]
+
+UPGRADE URGENCY: MODERATE, nothing very critical but upgrading is suggested
+                 if you experienced:
+
+                 1) Strange issues with Lua scripting.
+                 2) Not reconfigured reappearing master using Sentinel.
+                 3) Server continusly trying to save on save error.
+
+                 This version of Redis may also help with AOF and slow / busy
+                 disks and latency issues.
+
+* [FIX] Throttle BGSAVE attempt on saving error.
+* [FIX] redis-cli: raise error on bad command line switch.
+* [FIX] Redis/Jemalloc Gitignore were too aggressive.
+* [FIX] Test: fix RDB test checking file permissions.
+* [FIX] Sentinel: always redirect on master->slave transition.
+* [FIX] Lua updated to version 5.1.5. Fixes rare scripting issues.
+* [NEW] AOF: improved latency figures with slow/busy disks.
+* [NEW] Sentinel: turn old master into a slave when it comes back.
+* [NEW] More explicit panic message on out of memory.
+* [NEW] redis-cli: --latency-history mode implemented.
+
 --[ Redis 2.6.12 ]
 
 UPGRADE URGENCY: MODERATE, nothing very critical but a few non trivial bugs.

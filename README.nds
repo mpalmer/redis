@@ -31,9 +31,10 @@ use-case is up to you.
 
 Conversely, there are a few downsides:
 
-* Slow performance for a while after startup.  Since redis doesn't pre-fetch
-  any keys on startup, the first time each key accessed after startup there
-  is a hit to disk to go get the key.
+* Slow performance for a while after startup.  Until the keys you're working
+  on are in memory (either by preloading, or just through cache misses
+  pulling the important keys in), the first time each key accessed after
+  startup there is a hit to disk to go get the key.
 
 * If your "hot set" of keys is larger than the amount of memory you choose
   to allow Redis to use, performance will suck.  This shouldn't be news to
@@ -99,7 +100,7 @@ cutover downtime to a few seconds if you script it.
 
 MANAGEMENT
 
-There are two commands that have been added to the redis command set:
+There are a few commands that have been added to the redis command set:
 
 * `NDS FLUSH` -- Use this if you wish to trigger a manual flush of all keys
   (I can't imagine why you'd need to, but it's there if you want it).
