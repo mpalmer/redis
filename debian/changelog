@@ -1,3 +1,13 @@
+redis (2:2.6.16-0anchor1) squeeze wheezy; urgency=low
+
+  * New upstream release.  Fixes a few issues we're interested in, including
+    some rather unnecessary memory usage.
+  * Fixed a fairly nasty memory leak that's been plagueing us.
+  * Improve the performance of freeMemoryIfNeeded under conditions of heavy
+    dirty keys.
+
+ -- Matt Palmer <mpalmer@debian.org>  Fri, 30 Aug 2013 11:47:44 +1000
+
 redis (2:2.6.12-0anchor14) squeeze wheezy; urgency=low
 
   * Tone down the pointless flailing about being unable to open non-existent
