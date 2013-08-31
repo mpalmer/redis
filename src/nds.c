@@ -693,6 +693,7 @@ int flushDirtyKeys() {
                 }
             } else {
                 createDumpPayload(&payload, dictGetVal(deVal));
+                redisLog(REDIS_DEBUG, "Flushed %s (%llu serialized bytes)", keystr, sdslen(payload.io.buffer.ptr));
                 if (nds_set(ndsdb, keystr, payload.io.buffer.ptr) == REDIS_ERR) {
                     redisLog(REDIS_WARNING, "nds_set returned error, flush failed");
                     sdsfree(payload.io.buffer.ptr);
