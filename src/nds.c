@@ -665,6 +665,12 @@ int flushDirtyKeys() {
             return REDIS_ERR;
         }
 
+	ndsdb = nds_open(db, 1);        
+
+        if (!ndsdb) {
+            return REDIS_ERR;
+        }
+        
         while ((deKey = dictNext(di)) != NULL) {
             rio payload;
             sds keystr = dictGetKey(deKey);
@@ -683,30 +689,17 @@ int flushDirtyKeys() {
                 }
             } else {
                 createDumpPayload(&payload, dictGetVal(deVal));
-                redisLog(REDIS_DEBUG, "Flushing %s (%llu serialized bytes)", keystr, sdslen(payload.io.buffer.ptr));
-
-                /* It's important to open/close the DB on each key, because
-                 * large keys may take an extended time to serialize, and
-                 * holding a write lock means that the master will block
-                 * reads waiting for the lock to release, which blocks all
-                 * requests from all clients.  This is bad.  */
-                ndsdb = nds_open(db, 1);        
-
-                if (!ndsdb) {
-                    sdsfree(payload.io.buffer.ptr);
-                    return REDIS_ERR;
-                }
+                redisLog(REDIS_DEBUG, "Flushed %s (%llu serialized bytes)", keystr, sdslen(payload.io.buffer.ptr));
                 if (nds_set(ndsdb, keystr, payload.io.buffer.ptr) == REDIS_ERR) {
                     redisLog(REDIS_WARNING, "nds_set returned error, flush failed");
-                    nds_close(ndsdb);
                     sdsfree(payload.io.buffer.ptr);
                     return REDIS_ERR;
                 }
                 sdsfree(payload.io.buffer.ptr);
-                nds_close(ndsdb);
             }
         }
         
+        nds_close(ndsdb);
     }
     
     redisLog(REDIS_DEBUG, "Flush complete");
