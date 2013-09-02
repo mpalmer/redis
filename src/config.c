@@ -219,6 +219,11 @@ void loadServerConfigFromString(char *config) {
             }
         } else if (!strcasecmp(argv[0],"maxmemory") && argc == 2) {
             server.maxmemory = memtoll(argv[1],NULL);
+            if (server.maxmemory > 0 
+              && server.nds_watermark > 0
+              && server.maxmemory <= server.nds_watermark) {
+                err = "nds-watermark must be less than maxmemory"; goto loaderr;
+            }
         } else if (!strcasecmp(argv[0],"maxmemory-policy") && argc == 2) {
             if (!strcasecmp(argv[1],"volatile-lru")) {
                 server.maxmemory_policy = REDIS_MAXMEMORY_VOLATILE_LRU;
@@ -350,6 +355,13 @@ void loadServerConfigFromString(char *config) {
         } else if (!strcasecmp(argv[0],"nds") && argc == 2) {
             if ((server.nds = yesnotoi(argv[1])) == -1) {
                 err = "argument must be 'yes' or 'no'"; goto loaderr;
+            }
+        } else if (!strcasecmp(argv[0],"nds-watermark") && argc == 2) {
+            server.nds_watermark = memtoll(argv[1],NULL);
+            if (server.maxmemory > 0 
+              && server.nds_watermark > 0
+              && server.maxmemory <= server.nds_watermark) {
+                err = "nds-watermark must be less than maxmemory"; goto loaderr;
             }
         } else if (!strcasecmp(argv[0],"nds-preload") && argc == 2) {
             if ((server.nds_preload = yesnotoi(argv[1])) == -1) {
@@ -939,6 +951,7 @@ void configGetCommand(redisClient *c) {
     /* Numerical values */
     config_get_numerical_field("maxmemory",server.maxmemory);
     config_get_numerical_field("maxmemory-samples",server.maxmemory_samples);
+    config_get_numerical_field("nds-watermark",server.nds_watermark);
     config_get_numerical_field("timeout",server.maxidletime);
     config_get_numerical_field("tcp-keepalive",server.tcpkeepalive);
     config_get_numerical_field("auto-aof-rewrite-percentage",

@@ -840,6 +840,7 @@ struct redisServer {
     int stop_writes_on_bgsave_err;  /* Don't allow writes if can't BGSAVE */
     /* NDS persistence */
     int nds;                        /* Enable/disable NDS */
+    int nds_watermark;              /* How memory to try and stay under */
     int nds_preload;                /* Should we load all keys out of NDS on startup? */
     int nds_preload_in_progress;    /* Are we currently preloading? */
     int nds_preload_complete;       /* Have we already preloaded? */
