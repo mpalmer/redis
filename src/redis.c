@@ -1283,6 +1283,7 @@ void initServerConfig() {
     server.aof_selected_db = -1; /* Make sure the first time will not match */
     server.aof_flush_postponed_start = 0;
     server.nds = 0;
+    server.nds_watermark = 0;
     server.nds_preload = 0;
     server.aof_rewrite_incremental_fsync = 1;
     server.pidfile = zstrdup("/var/run/redis.pid");
@@ -2502,11 +2503,11 @@ void monitorCommand(redisClient *c) {
  * used by the server.
  */
 int freeMemoryIfNeeded() {
-    size_t mem_used, mem_tofree, mem_freed;
+    size_t mem_used, mem_wanted;
     int slaves = listLength(server.slaves);
 
     /* 0 == "no limit", so that's easy */
-    if (server.maxmemory == 0) return REDIS_OK;
+    if (server.maxmemory == 0 && server.nds && server.nds_watermark == 0) return REDIS_OK;
 
     /* Remove the size of slaves output buffers and AOF buffer from the
      * count of used memory. */
@@ -2530,19 +2531,20 @@ int freeMemoryIfNeeded() {
         mem_used -= aofRewriteBufferSize();
     }
 
-    /* Check if we are over the memory limit. */
-    if (mem_used <= server.maxmemory) return REDIS_OK;
+    /* Check if we are over any memory limits. */
+    if (mem_used <= server.maxmemory &&
+        (!server.nds || mem_used <= server.nds_watermark)) return REDIS_OK;
 
     if (server.maxmemory_policy == REDIS_MAXMEMORY_NO_EVICTION) {
         redisLog(REDIS_WARNING, "Reached max memory, but maxmemory-policy is noeviction");
         return REDIS_ERR; /* We need to free memory, but policy forbids. */
     }
+    
+    mem_wanted = server.nds ? server.nds_watermark : server.maxmemory;
 
-    /* Compute how much memory we need to free. */
-    mem_tofree = mem_used - server.maxmemory;
-    mem_freed = 0;
+    redisLog(REDIS_DEBUG, "freeMemoryIfNeeded running: %llu used, want to get down to %llu", mem_used, mem_wanted);
 
-    while (mem_freed < mem_tofree) {
+    while (mem_used > mem_wanted) {
         int j, k, keys_freed = 0;
 
         if (server.nds) {
@@ -2640,8 +2642,10 @@ int freeMemoryIfNeeded() {
                      * pretend everything's vaguely hunky-dory, and hope
                      * that the flush that's going on will clear out those
                      * dirty keys sooner or later.  */
-                    keys_freed++;
-                    continue;
+                    if (mem_used > server.maxmemory) {
+                        keys_freed++;
+                        continue;
+                    }
                 }
                 
                 long long delta;
@@ -2664,7 +2668,8 @@ int freeMemoryIfNeeded() {
                 dictDelete(db->dict,keyobj->ptr);
 
                 delta -= (long long) zmalloc_used_memory();
-                mem_freed += delta;
+                redisLog(REDIS_DEBUG, "freeMemoryIfNeeded: Freed %llu bytes", delta);
+                mem_used -= delta;
                 server.stat_evictedkeys++;
                 decrRefCount(keyobj);
                 keys_freed++;
@@ -2677,8 +2682,16 @@ int freeMemoryIfNeeded() {
             }
         }
         if (!keys_freed) {
-            redisLog(REDIS_WARNING, "No keys suitable for eviction");
-            return REDIS_ERR; /* nothing to free... */
+            if (mem_used > server.maxmemory) {
+                redisLog(REDIS_WARNING, "No keys suitable for eviction");
+                return REDIS_ERR; /* nothing to free... */
+            } else {
+                /* We ran out of keys to free, but we're not over maxmemory,
+                 * so we'll just return OK, and hope a flush completes so we
+                 * can free more memory later.  */
+                redisLog(REDIS_NOTICE, "Didn't get down to NDS watermark; hope that's OK");
+                return REDIS_OK;
+            }
         }
     }
     return REDIS_OK;
