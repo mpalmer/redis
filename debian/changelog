@@ -1,3 +1,9 @@
+redis (2:2.6.16-0anchor3) squeeze wheezy; urgency=low
+
+  * Revert the write lock patch.  It was a silly idea.
+
+ -- Matt Palmer <mpalmer@debian.org>  Mon, 02 Sep 2013 19:37:22 +1000
+
 redis (2:2.6.16-0anchor2) squeeze wheezy; urgency=low
 
   * A bit more debug logging.
