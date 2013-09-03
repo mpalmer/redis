@@ -1,3 +1,9 @@
+redis (2:2.6.16-0anchor4) squeeze wheezy; urgency=low
+
+  * Deploy nds-watermark.  Very cool stuff.
+
+ -- Matt Palmer <mpalmer@debian.org>  Tue, 03 Sep 2013 09:58:57 +1000
+
 redis (2:2.6.16-0anchor3) squeeze wheezy; urgency=low
 
   * Revert the write lock patch.  It was a silly idea.
