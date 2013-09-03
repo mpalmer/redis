@@ -2548,9 +2548,10 @@ int freeMemoryIfNeeded() {
         int j, k, keys_freed = 0;
 
         if (server.nds) {
-            /* We need to clear some memory... if we're not already flushing keys, now
-             * would be a very, very good time to do it. */
+            /* We need to clear some memory... if we're not already flushing
+             * keys, now would be a very, very good time to do it.  */
             if (server.nds_child_pid == -1) {
+                redisLog(REDIS_DEBUG, "Starting an NDS flush in freeMemoryIfNeeded");
                 if (backgroundDirtyKeysFlush() == REDIS_ERR) {
                     redisLog(REDIS_WARNING, "Failed to trigger background key flush in freeMemoryIfNeeded.  Urgh.");
                     return REDIS_ERR;
@@ -2631,23 +2632,25 @@ int freeMemoryIfNeeded() {
                     }
                 }
             }
-
-            /* Finally remove the selected key, (as long as it isn't dirty, if
-             * we're using NDS) */
-            if (bestkey) {
-                if (server.nds && isDirtyKey(db, bestkey)) {
-                    /* We don't want to delete a dirty key, but at the same
-                     * time we don't want to spook the !keys_freed check
-                     * below and cause it to scream "OOM!".  So, let's just
-                     * pretend everything's vaguely hunky-dory, and hope
-                     * that the flush that's going on will clear out those
-                     * dirty keys sooner or later.  */
-                    if (mem_used > server.maxmemory) {
-                        keys_freed++;
-                        continue;
-                    }
+            
+            if (!bestkey || isDirtyKey(db, bestkey)) {
+                /* Our plan to quickly find a key to discard has failed; now we're getting
+                 * desperate.  Let's just find the first key that isn't dirty, throw that
+                 * out, and get on with our day. */
+                dictIterator *di;
+                di = dictGetSafeIterator(dict);
+                while (isDirtyKey(db, bestkey) && (de = dictNext(di)) != NULL) {
+                    bestkey = dictGetKey(de);
                 }
-                
+                /* After all that, do we have a clean key to discard? */
+                if (isDirtyKey(db, bestkey)) {
+                    /* WTF?  *Everything's* dirty?  Well, I guess we're screwed. */
+                    bestkey = NULL;
+                }
+            }
+            
+            /* Finally remove the selected key, if we have one. */
+            if (bestkey) {
                 long long delta;
 
                 robj *keyobj = createStringObject(bestkey,sdslen(bestkey));
@@ -2668,7 +2671,7 @@ int freeMemoryIfNeeded() {
                 dictDelete(db->dict,keyobj->ptr);
 
                 delta -= (long long) zmalloc_used_memory();
-                redisLog(REDIS_DEBUG, "freeMemoryIfNeeded: Freed %llu bytes", delta);
+                redisLog(REDIS_DEBUG, "freeMemoryIfNeeded: Nuked %s, freed %llu bytes", bestkey, delta);
                 mem_used -= delta;
                 server.stat_evictedkeys++;
                 decrRefCount(keyobj);
