@@ -2503,7 +2503,9 @@ void monitorCommand(redisClient *c) {
  * used by the server.
  */
 int freeMemoryIfNeeded() {
-    size_t mem_used, mem_wanted;
+    size_t mem_used;
+    size_t mem_limit = server.nds && server.nds_watermark > 0 
+                        ? server.nds_watermark : server.maxmemory;
     int slaves = listLength(server.slaves);
 
     /* 0 == "no limit", so that's easy */
@@ -2532,19 +2534,16 @@ int freeMemoryIfNeeded() {
     }
 
     /* Check if we are over any memory limits. */
-    if (mem_used <= server.maxmemory &&
-        (!server.nds || mem_used <= server.nds_watermark)) return REDIS_OK;
+    if (mem_used <= mem_limit) return REDIS_OK;
 
     if (server.maxmemory_policy == REDIS_MAXMEMORY_NO_EVICTION) {
         redisLog(REDIS_WARNING, "Reached max memory, but maxmemory-policy is noeviction");
         return REDIS_ERR; /* We need to free memory, but policy forbids. */
     }
     
-    mem_wanted = server.nds ? server.nds_watermark : server.maxmemory;
+    redisLog(REDIS_DEBUG, "freeMemoryIfNeeded running: %llu used, want to get down to %llu", mem_used, mem_limit);
 
-    redisLog(REDIS_DEBUG, "freeMemoryIfNeeded running: %llu used, want to get down to %llu", mem_used, mem_wanted);
-
-    while (mem_used > mem_wanted) {
+    while (mem_used > mem_limit) {
         int j, k, keys_freed = 0;
 
         if (server.nds) {
@@ -2556,8 +2555,7 @@ int freeMemoryIfNeeded() {
                     redisLog(REDIS_WARNING, "Failed to trigger background key flush in freeMemoryIfNeeded.  Urgh.");
                     return REDIS_ERR;
                 }
-            }
-            else {
+            } else {
                 /* We need to do this frequently otherwise the list of dirty
                  * keys will never be updated */
                 checkNDSChildComplete();
