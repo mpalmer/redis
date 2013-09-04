@@ -707,6 +707,7 @@ int flushDirtyKeys() {
     if (server.nds_snapshot_in_progress) {
     	int rv;
 
+    	redisLog(REDIS_NOTICE, "Commencing snapshot");
         /* Woohoo!  Snapshot time! */
         system("rm -rf ./snapshot");
         system("mkdir -p ./snapshot");
@@ -722,6 +723,8 @@ int flushDirtyKeys() {
         
         if ((rv = mdb_env_copy(server.mdb_env, "./snapshot"))) {
             redisLog(REDIS_WARNING, "Snapshot failed: %s", mdb_strerror(rv));
+        } else {
+            redisLog(REDIS_NOTICE, "Snapshot completed successfully");
         }
     }
                 
