@@ -639,7 +639,6 @@ int rdbSaveIterator(void *data, robj *key) {
     	rv = REDIS_OK;
     }
     
-    decrRefCount(val);
     return rv;
 }
 
