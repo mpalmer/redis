@@ -2842,8 +2842,9 @@ int freeMemoryIfNeeded() {
                     return REDIS_ERR;
                 }
             } else {
-                /* We need to do this frequently otherwise the list of dirty
-                 * keys will never be updated */
+                /* We need to do this frequently otherwise the list of
+                 * dirty/flushing keys will never be cleared, even when
+                 * they're actually flushed to disk */
                 checkNDSChildComplete();
             }
         }
@@ -2934,18 +2935,25 @@ int freeMemoryIfNeeded() {
         }
             
         if (!bestkey || isDirtyKey(&server.db[bestdb], bestkey)) {
+            redisLog(REDIS_DEBUG, "Didn't find a clean key to nuke; finding first available key");
             /* Our plan to quickly find a key to discard has failed; now we're getting
              * desperate.  Let's just find the first key that isn't dirty, throw that
              * out, and get on with our day. */
             for (j = 0; j < server.dbnum; j++) {
                 dictEntry *de;
-                dictIterator *di = dictGetSafeIterator(server.db[j].dict);
+                dictIterator *di;
+                if (dictSize(dict) == 0) continue;
+                
+                di = dictGetSafeIterator(server.db[j].dict);
                 while (isDirtyKey(&server.db[j], bestkey) && (de = dictNext(di)) != NULL) {
                     bestkey = dictGetKey(de);
                 }
+                dictReleaseIterator(di);
+
                 /* After all that, do we have a clean key to discard? */
                 if (bestkey && !isDirtyKey(&server.db[j], bestkey)) {
                     /* Well, that's a relief */
+                    redisLog(REDIS_DEBUG, "Phew, found clean key %s in DB %i to nuke", bestkey, j);
                     bestdb = j;
                     break;
                 }
@@ -2953,6 +2961,7 @@ int freeMemoryIfNeeded() {
             
             if (bestkey && isDirtyKey(&server.db[bestdb], bestkey)) {
                 /* WTF?  *Everything's* dirty?  Well, I guess we're screwed. */
+                redisLog(REDIS_DEBUG, "No clean keys to nuke");
                 bestkey = NULL;
             }
         }
@@ -2964,6 +2973,7 @@ int freeMemoryIfNeeded() {
 
             robj *keyobj = createStringObject(bestkey,sdslen(bestkey));
             propagateExpire(db,keyobj);
+            decrRefCount(keyobj);
             /* We compute the amount of memory freed by dbDelete() alone.
              * It is possible that actually the memory needed to propagate
              * the DEL in AOF and replication link is greater than the one
@@ -2976,14 +2986,13 @@ int freeMemoryIfNeeded() {
 
             /* dbDelete nukes the key from NDS, which is quite particularly
              * not what we want.  So we do it by hand. */
-            if (dictSize(db->expires) > 0) dictDelete(db->expires,keyobj->ptr);
-            dictDelete(db->dict,keyobj->ptr);
+            if (dictSize(db->expires) > 0) dictDelete(db->expires,bestkey);
+            dictDelete(db->dict,bestkey);
 
             delta -= (long long) zmalloc_used_memory();
             redisLog(REDIS_DEBUG, "freeMemoryIfNeeded: Nuked %s, freed %llu bytes", bestkey, delta);
             mem_used -= delta;
             server.stat_evictedkeys++;
-            decrRefCount(keyobj);
 
             /* When the memory to free starts to be big enough, we may
              * start spending so much time here that is impossible to
