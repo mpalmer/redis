@@ -2544,7 +2544,10 @@ int freeMemoryIfNeeded() {
     redisLog(REDIS_DEBUG, "freeMemoryIfNeeded running: %llu used, want to get down to %llu", mem_used, mem_limit);
 
     while (mem_used > mem_limit) {
-        int j, k, keys_freed = 0;
+        int j, k;
+        long bestval = 0; /* just to prevent warning */
+        long bestdb  = -1;
+        sds bestkey = NULL;
 
         if (server.nds) {
             /* We need to clear some memory... if we're not already flushing
@@ -2562,127 +2565,149 @@ int freeMemoryIfNeeded() {
             }
         }
 
-        for (j = 0; j < server.dbnum; j++) {
-            long bestval = 0; /* just to prevent warning */
-            sds bestkey = NULL;
-            struct dictEntry *de;
-            redisDb *db = server.db+j;
-            dict *dict;
+        /* A random key from a random DB */
+        if (server.maxmemory_policy == REDIS_MAXMEMORY_ALLKEYS_RANDOM ||
+            server.maxmemory_policy == REDIS_MAXMEMORY_VOLATILE_RANDOM)
+        {
+            while (bestdb == -1) {
+                dict *dict;
 
-            if (server.maxmemory_policy == REDIS_MAXMEMORY_ALLKEYS_LRU ||
-                server.maxmemory_policy == REDIS_MAXMEMORY_ALLKEYS_RANDOM)
-            {
-                dict = server.db[j].dict;
-            } else {
-                dict = server.db[j].expires;
+                bestdb = rand() % server.dbnum;
+                if (server.maxmemory_policy == REDIS_MAXMEMORY_ALLKEYS_RANDOM)
+                {
+                    dict = server.db[bestdb].dict;
+                } else {
+                    dict = server.db[bestdb].expires;
+                }
+                if (dictSize(dict) == 0) {
+                    bestdb = -1;
+                } else {
+                    struct dictEntry *de = dictGetRandomKey(dict);
+                    bestkey = dictGetKey(de);
+                }
             }
-            if (dictSize(dict) == 0) continue;
+        } else {
+            for (j = 0; j < server.dbnum; j++) {
+                struct dictEntry *de;
+                redisDb *db = server.db+j;
+                dict *dict;
 
-            /* volatile-random and allkeys-random policy */
-            if (server.maxmemory_policy == REDIS_MAXMEMORY_ALLKEYS_RANDOM ||
-                server.maxmemory_policy == REDIS_MAXMEMORY_VOLATILE_RANDOM)
-            {
-                de = dictGetRandomKey(dict);
-                bestkey = dictGetKey(de);
-            }
+                if (server.maxmemory_policy == REDIS_MAXMEMORY_ALLKEYS_LRU ||
+                    server.maxmemory_policy == REDIS_MAXMEMORY_ALLKEYS_RANDOM)
+                {
+                    dict = server.db[j].dict;
+                } else {
+                    dict = server.db[j].expires;
+                }
+                if (dictSize(dict) == 0) continue;
 
-            /* volatile-lru and allkeys-lru policy */
-            else if (server.maxmemory_policy == REDIS_MAXMEMORY_ALLKEYS_LRU ||
-                server.maxmemory_policy == REDIS_MAXMEMORY_VOLATILE_LRU)
-            {
-                for (k = 0; k < server.maxmemory_samples; k++) {
-                    sds thiskey;
-                    long thisval;
-                    robj *o;
+                /* volatile-lru and allkeys-lru policy */
+                if (server.maxmemory_policy == REDIS_MAXMEMORY_ALLKEYS_LRU ||
+                    server.maxmemory_policy == REDIS_MAXMEMORY_VOLATILE_LRU)
+                {
+                    for (k = 0; k < server.maxmemory_samples; k++) {
+                        sds thiskey;
+                        long thisval;
+                        robj *o;
 
-                    de = dictGetRandomKey(dict);
-                    thiskey = dictGetKey(de);
-                    /* When policy is volatile-lru we need an additional lookup
-                     * to locate the real key, as dict is set to db->expires. */
-                    if (server.maxmemory_policy == REDIS_MAXMEMORY_VOLATILE_LRU)
-                        de = dictFind(db->dict, thiskey);
-                    o = dictGetVal(de);
-                    thisval = estimateObjectIdleTime(o);
+                        de = dictGetRandomKey(dict);
+                        thiskey = dictGetKey(de);
+                        /* When policy is volatile-lru we need an additional lookup
+                         * to locate the real key, as dict is set to db->expires. */
+                        if (server.maxmemory_policy == REDIS_MAXMEMORY_VOLATILE_LRU)
+                            de = dictFind(db->dict, thiskey);
+                        o = dictGetVal(de);
+                        thisval = estimateObjectIdleTime(o);
 
-                    /* Higher idle time is better candidate for deletion */
-                    if (bestkey == NULL || thisval > bestval) {
-                        bestkey = thiskey;
-                        bestval = thisval;
+                        /* Higher idle time is better candidate for deletion */
+                        if (bestkey == NULL || thisval > bestval) {
+                            bestkey = thiskey;
+                            bestval = thisval;
+                            bestdb  = j;
+                        }
+                    }
+                }
+
+                /* volatile-ttl */
+                else if (server.maxmemory_policy == REDIS_MAXMEMORY_VOLATILE_TTL) {
+                    for (k = 0; k < server.maxmemory_samples; k++) {
+                        sds thiskey;
+                        long thisval;
+
+                        de = dictGetRandomKey(dict);
+                        thiskey = dictGetKey(de);
+                        thisval = (long) dictGetVal(de);
+
+                        /* Expire sooner (minor expire unix timestamp) is better
+                         * candidate for deletion */
+                        if (bestkey == NULL || thisval < bestval) {
+                            bestkey = thiskey;
+                            bestval = thisval;
+                            bestdb  = j;
+                        }
                     }
                 }
             }
-
-            /* volatile-ttl */
-            else if (server.maxmemory_policy == REDIS_MAXMEMORY_VOLATILE_TTL) {
-                for (k = 0; k < server.maxmemory_samples; k++) {
-                    sds thiskey;
-                    long thisval;
-
-                    de = dictGetRandomKey(dict);
-                    thiskey = dictGetKey(de);
-                    thisval = (long) dictGetVal(de);
-
-                    /* Expire sooner (minor expire unix timestamp) is better
-                     * candidate for deletion */
-                    if (bestkey == NULL || thisval < bestval) {
-                        bestkey = thiskey;
-                        bestval = thisval;
-                    }
-                }
-            }
+        }
             
-            if (!bestkey || isDirtyKey(db, bestkey)) {
-                /* Our plan to quickly find a key to discard has failed; now we're getting
-                 * desperate.  Let's just find the first key that isn't dirty, throw that
-                 * out, and get on with our day. */
-                dictIterator *di;
-                di = dictGetSafeIterator(dict);
-                while (isDirtyKey(db, bestkey) && (de = dictNext(di)) != NULL) {
+        if (!bestkey || isDirtyKey(&server.db[bestdb], bestkey)) {
+            /* Our plan to quickly find a key to discard has failed; now we're getting
+             * desperate.  Let's just find the first key that isn't dirty, throw that
+             * out, and get on with our day. */
+            for (j = 0; j < server.dbnum; j++) {
+                dictEntry *de;
+                dictIterator *di = dictGetSafeIterator(server.db[j].dict);
+                while (isDirtyKey(&server.db[j], bestkey) && (de = dictNext(di)) != NULL) {
                     bestkey = dictGetKey(de);
                 }
                 /* After all that, do we have a clean key to discard? */
-                if (isDirtyKey(db, bestkey)) {
-                    /* WTF?  *Everything's* dirty?  Well, I guess we're screwed. */
-                    bestkey = NULL;
+                if (bestkey && !isDirtyKey(&server.db[j], bestkey)) {
+                    /* Well, that's a relief */
+                    bestdb = j;
+                    break;
                 }
             }
             
-            /* Finally remove the selected key, if we have one. */
-            if (bestkey) {
-                long long delta;
-
-                robj *keyobj = createStringObject(bestkey,sdslen(bestkey));
-                propagateExpire(db,keyobj);
-                /* We compute the amount of memory freed by dbDelete() alone.
-                 * It is possible that actually the memory needed to propagate
-                 * the DEL in AOF and replication link is greater than the one
-                 * we are freeing removing the key, but we can't account for
-                 * that otherwise we would never exit the loop.
-                 *
-                 * AOF and Output buffer memory will be freed eventually so
-                 * we only care about memory used by the key space. */
-                delta = (long long) zmalloc_used_memory();
-
-                /* dbDelete nukes the key from NDS, which is quite particularly
-                 * not what we want.  So we do it by hand. */
-                if (dictSize(db->expires) > 0) dictDelete(db->expires,keyobj->ptr);
-                dictDelete(db->dict,keyobj->ptr);
-
-                delta -= (long long) zmalloc_used_memory();
-                redisLog(REDIS_DEBUG, "freeMemoryIfNeeded: Nuked %s, freed %llu bytes", bestkey, delta);
-                mem_used -= delta;
-                server.stat_evictedkeys++;
-                decrRefCount(keyobj);
-                keys_freed++;
-
-                /* When the memory to free starts to be big enough, we may
-                 * start spending so much time here that is impossible to
-                 * deliver data to the slaves fast enough, so we force the
-                 * transmission here inside the loop. */
-                if (slaves) flushSlavesOutputBuffers();
+            if (bestkey && isDirtyKey(&server.db[bestdb], bestkey)) {
+                /* WTF?  *Everything's* dirty?  Well, I guess we're screwed. */
+                bestkey = NULL;
             }
         }
-        if (!keys_freed) {
+            
+        /* Finally remove the selected key, if we have one. */
+        if (bestkey) {
+            long long delta;
+            struct redisDb *db = &server.db[bestdb];
+
+            robj *keyobj = createStringObject(bestkey,sdslen(bestkey));
+            propagateExpire(db,keyobj);
+            /* We compute the amount of memory freed by dbDelete() alone.
+             * It is possible that actually the memory needed to propagate
+             * the DEL in AOF and replication link is greater than the one
+             * we are freeing removing the key, but we can't account for
+             * that otherwise we would never exit the loop.
+             *
+             * AOF and Output buffer memory will be freed eventually so
+             * we only care about memory used by the key space. */
+            delta = (long long) zmalloc_used_memory();
+
+            /* dbDelete nukes the key from NDS, which is quite particularly
+             * not what we want.  So we do it by hand. */
+            if (dictSize(db->expires) > 0) dictDelete(db->expires,keyobj->ptr);
+            dictDelete(db->dict,keyobj->ptr);
+
+            delta -= (long long) zmalloc_used_memory();
+            redisLog(REDIS_DEBUG, "freeMemoryIfNeeded: Nuked %s, freed %llu bytes", bestkey, delta);
+            mem_used -= delta;
+            server.stat_evictedkeys++;
+            decrRefCount(keyobj);
+
+            /* When the memory to free starts to be big enough, we may
+             * start spending so much time here that is impossible to
+             * deliver data to the slaves fast enough, so we force the
+             * transmission here inside the loop. */
+            if (slaves) flushSlavesOutputBuffers();
+        } else {
             if (mem_used > server.maxmemory) {
                 redisLog(REDIS_WARNING, "No keys suitable for eviction");
                 return REDIS_ERR; /* nothing to free... */
