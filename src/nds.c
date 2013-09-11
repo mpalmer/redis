@@ -328,7 +328,7 @@ static int nds_set(NDSDB *db, sds key, sds val) {
             mdb_dbi_close(server.mdb_env, db->dbi);
             mdb_txn_begin(server.mdb_env, NULL, 0, &(db->txn));
             mdb_dbi_open(db->txn, db->db_name, 0, &(db->dbi));
-	}
+        }
     }
     
     return REDIS_OK;
@@ -665,7 +665,7 @@ int flushDirtyKeys() {
             return REDIS_ERR;
         }
 
-	ndsdb = nds_open(db, 1);        
+        ndsdb = nds_open(db, 1);        
 
         if (!ndsdb) {
             return REDIS_ERR;
@@ -705,9 +705,9 @@ int flushDirtyKeys() {
     redisLog(REDIS_DEBUG, "Flush complete");
 
     if (server.nds_snapshot_in_progress) {
-    	int rv;
+        int rv;
 
-    	redisLog(REDIS_NOTICE, "Commencing snapshot");
+        redisLog(REDIS_NOTICE, "Commencing snapshot");
         /* Woohoo!  Snapshot time! */
         system("rm -rf ./snapshot");
         system("mkdir -p ./snapshot");
@@ -862,7 +862,7 @@ void ndsSnapshotCommand(redisClient *c) {
             return;
         }
     } else {
-    	/* A regular (non-snapshot) NDS flush is already in progress; we'll
+        /* A regular (non-snapshot) NDS flush is already in progress; we'll
          * have to do our snapshot later */
         server.nds_snapshot_pending = 1;
     }
