@@ -2659,7 +2659,7 @@ int freeMemoryIfNeeded() {
             for (j = 0; j < server.dbnum; j++) {
                 dictEntry *de;
                 dictIterator *di;
-                if (dictSize(dict) == 0) continue;
+                if (dictSize(server.db[bestdb].dict) == 0) continue;
                 
                 di = dictGetSafeIterator(server.db[j].dict);
                 while (isDirtyKey(&server.db[j], bestkey) && (de = dictNext(di)) != NULL) {
