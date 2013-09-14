@@ -1,3 +1,9 @@
+redis (2:2.6.16-0anchor6) squeeze wheezy; urgency=low
+
+  * Fix problem where nds-watermark could be negative.
+
+ -- Matt Palmer <mpalmer@debian.org>  Sun, 15 Sep 2013 07:02:54 +1000
+
 redis (2:2.6.16-0anchor5) squeeze wheezy; urgency=low
 
   * Numerous improvements to freeMemoryIfNeeded to make it faster, less
