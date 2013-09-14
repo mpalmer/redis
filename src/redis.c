@@ -2853,22 +2853,21 @@ int freeMemoryIfNeeded() {
         if (server.maxmemory_policy == REDIS_MAXMEMORY_ALLKEYS_RANDOM ||
             server.maxmemory_policy == REDIS_MAXMEMORY_VOLATILE_RANDOM)
         {
-            while (bestdb == -1) {
-                dict *dict;
+            dict *dict;
 
-                bestdb = rand() % server.dbnum;
-                if (server.maxmemory_policy == REDIS_MAXMEMORY_ALLKEYS_RANDOM)
-                {
-                    dict = server.db[bestdb].dict;
-                } else {
-                    dict = server.db[bestdb].expires;
-                }
-                if (dictSize(dict) == 0) {
-                    bestdb = -1;
-                } else {
-                    struct dictEntry *de = dictGetRandomKey(dict);
-                    bestkey = dictGetKey(de);
-                }
+            bestdb = rand() % server.dbnum;
+            if (server.maxmemory_policy == REDIS_MAXMEMORY_ALLKEYS_RANDOM)
+            {
+                dict = server.db[bestdb].dict;
+            } else {
+                dict = server.db[bestdb].expires;
+            }
+            if (dictSize(dict) == 0) {
+                redisLog(REDIS_DEBUG, "Database %i is empty while trying to find a random key to evict", bestdb);
+                bestdb = -1;
+            } else {
+                struct dictEntry *de = dictGetRandomKey(dict);
+                bestkey = dictGetKey(de);
             }
         } else {
             for (j = 0; j < server.dbnum; j++) {
@@ -2942,10 +2941,21 @@ int freeMemoryIfNeeded() {
             for (j = 0; j < server.dbnum; j++) {
                 dictEntry *de;
                 dictIterator *di;
-                if (dictSize(server.db[j].dict) == 0) continue;
+                dict *dict;
+
+                if (server.maxmemory_policy == REDIS_MAXMEMORY_ALLKEYS_LRU ||
+                    server.maxmemory_policy == REDIS_MAXMEMORY_ALLKEYS_RANDOM)
+                {
+                    dict = server.db[j].dict;
+                } else {
+                    dict = server.db[j].expires;
+                }
+
+                redisLog(REDIS_DEBUG, "DB %i has %llu keys", j, dictSize(dict));
+                if (dictSize(dict) == 0) continue;
                 
-                di = dictGetSafeIterator(server.db[j].dict);
-                while (isDirtyKey(&server.db[j], bestkey) && (de = dictNext(di)) != NULL) {
+                di = dictGetSafeIterator(dict);
+                while ((!bestkey || isDirtyKey(&server.db[j], bestkey)) && (de = dictNext(di)) != NULL) {
                     bestkey = dictGetKey(de);
                 }
                 dictReleaseIterator(di);
