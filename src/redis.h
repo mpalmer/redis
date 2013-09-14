@@ -613,7 +613,8 @@ struct redisServer {
     char *pipesavecommand;          /* Program to fork to receive an RDB over a pipe */
     /* NDS persistence */
     int nds;                        /* Enable/disable NDS */
-    int nds_watermark;              /* How memory to try and stay under */
+    unsigned long long nds_watermark; /* How much memory we should try to restrict
+                                       * ourselves to */
     int nds_preload;                /* Should we load all keys out of NDS on startup? */
     int nds_preload_in_progress;    /* Are we currently preloading? */
     int nds_preload_complete;       /* Have we already preloaded? */
