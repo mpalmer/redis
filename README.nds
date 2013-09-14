@@ -144,12 +144,8 @@ yet.  If you're not comfortable digging into the code to find the bug and
 submit a patch, you *probably* don't want to be deploying this thing right
 now.
 
-Here are the list of things that are known deficiencies in the code:
-
-* Keys lose their TTLs when they get stashed.  This presumably just involves
-  modifying the data dumper/loader to include setting the TTL (as is done in
-  full RDB files, probably).  I'll likely leave this for someone who uses
-  TTLs on their keys.
+Here are the list of things that are known deficiencies in the code, as
+compared to "stock" Redis:
 
 * Keys can be no longer than 511 octets in length.  This is a limitation in
   MDB, and isn't something that can be easily extended.  At present, keys
