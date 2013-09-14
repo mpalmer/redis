@@ -40,6 +40,23 @@ void SlotToKeyDel(robj *key);
  * C-level DB API
  *----------------------------------------------------------------------------*/
 
+/* Ensure that the specified key is in memory, without actually  -- only
+ * useful for NDS.  Returns REDIS_OK if NDS is off, or if the key was
+ * loaded, and REDIS_ERR if the key wasn't found in NDS.  */
+int loadKey(redisDb *db, robj *key) {
+    if (!server.nds) {
+        return REDIS_OK;
+    }
+    
+    /* Don't want to go to disk if the data is in-memory -- that'll
+     * overwrite possibly-newer in memory data with stale data from disk */
+    if (dictFind(db->dict, key->ptr)) {
+        return REDIS_OK;
+    } else {
+        return getNDS(db, key) ? REDIS_OK : REDIS_ERR;
+    }
+}
+
 robj *lookupKey(redisDb *db, robj *key) {
     robj *val = NULL;
     dictEntry *de = dictFind(db->dict,key->ptr);
@@ -56,16 +73,6 @@ robj *lookupKey(redisDb *db, robj *key) {
             
             server.stat_nds_cache_misses++;
 
-            if (obj) {
-                /* It would be neat to be able to use dbAdd here, but we'd end
-                 * up with an unnecessary write to the DB if we did, because
-                 * we're hooking into dbAdd to write keys to the DB.
-                 */
-                sds copy = sdsdup(key->ptr);
-                int retval = dictAdd(db->dict, copy, obj);
-
-                redisAssertWithInfo(NULL,key,retval == REDIS_OK);
-            }
             val = obj;
         }
     }
@@ -569,6 +576,12 @@ void setExpire(redisDb *db, robj *key, long long when) {
 long long getExpire(redisDb *db, robj *key) {
     dictEntry *de;
 
+    if (server.nds) {
+        /* Need to ensure the key's loaded before we can check whether its
+         * expired */
+        loadKey(db, key);
+    }
+
     /* No expire? return ASAP */
     if (dictSize(db->expires) == 0 ||
        (de = dictFind(db->expires,key->ptr)) == NULL) return -1;
@@ -627,6 +640,12 @@ int expireIfNeeded(redisDb *db, robj *key) {
     if (mstime() <= when) return 0;
 
     /* Delete the key */
+    if (server.nds) {
+        /* By saying "this key is dirty", it'll be included in the next
+         * flush, detected as not existing, and thus get deleted from NDS */
+        touchDirtyKey(db, key->ptr);
+    }
+        
     server.stat_expiredkeys++;
     propagateExpire(db,key);
     return dbDelete(db,key);
@@ -706,6 +725,10 @@ void pexpireatCommand(redisClient *c) {
 void ttlGenericCommand(redisClient *c, int output_ms) {
     long long expire, ttl = -1;
 
+    if (server.nds) {
+        /* Key needs to be in memory to get TTL */
+        loadKey(c->db, c->argv[1]);
+    }
     expire = getExpire(c->db,c->argv[1]);
     if (expire != -1) {
         ttl = expire-mstime();
@@ -729,12 +752,19 @@ void pttlCommand(redisClient *c) {
 void persistCommand(redisClient *c) {
     dictEntry *de;
 
+    if (server.nds) {
+        /* Key needs to be in memory to manipulate TTL */
+        loadKey(c->db, c->argv[1]);
+    }
     de = dictFind(c->db->dict,c->argv[1]->ptr);
     if (de == NULL) {
         addReply(c,shared.czero);
     } else {
         if (removeExpire(c->db,c->argv[1])) {
             addReply(c,shared.cone);
+            if (server.nds) {
+                touchDirtyKey(c->db, c->argv[1]->ptr);
+            }
             server.dirty++;
         } else {
             addReply(c,shared.czero);

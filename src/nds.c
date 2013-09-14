@@ -227,6 +227,9 @@ static int nds_exists(NDSDB *db, sds key) {
     if (isDirtyKey(db->rdb, key)) {
         /* If the key's dirty but you're coming here, then it isn't in
          * memory, so it clearly mustn't exist.  */
+        redisLog(REDIS_DEBUG,
+                 "nds_exists(db=%i, key=%s) => NOT_IN_MEMORY",
+                 db->rdb->id, key); 
         return 0;
     }
     
@@ -246,6 +249,7 @@ static int nds_exists(NDSDB *db, sds key) {
         rv = -1;
     }
 
+    redisLog(REDIS_DEBUG, "nds_exists(db=%i, key=%s) => %i", db->rdb->id, key, rv);
     return rv;
 }
 
@@ -265,6 +269,9 @@ static sds nds_get(NDSDB *db, sds key) {
          * exist, and so I'm not going to go and get an out-of-date copy off
          * disk for you.
          */
+        redisLog(REDIS_DEBUG,
+                 "nds_get(db=%i, key=%s) => NOT_IN_MEMORY",
+                 db->rdb->id, key); 
         return NULL;
     }
     
@@ -275,14 +282,18 @@ static sds nds_get(NDSDB *db, sds key) {
 
     rv = mdb_get(db->txn, db->dbi, &k, &v);
     
-    if (rv && rv != MDB_NOTFOUND) {
-        redisLog(REDIS_WARNING, "mdb_get(%s) failed: %s", key, mdb_strerror(rv));
-    }
-    
     if (rv) {
+        if (rv == MDB_NOTFOUND) {
+            redisLog(REDIS_DEBUG, "nds_get(db=%i, key=%s) => NOTFOUND",
+                     db->rdb->id, key);
+        } else {
+            redisLog(REDIS_WARNING, "mdb_get(%s) failed: %s", key, mdb_strerror(rv));
+        }
         return NULL;
     }
     
+    redisLog(REDIS_DEBUG, "nds_get(db=>%i, key=%s) => %i byte value",
+             db->rdb->id, key, v.mv_size);
     return sdsnewlen(v.mv_data, v.mv_size);
 }
 
@@ -331,6 +342,8 @@ static int nds_set(NDSDB *db, sds key, sds val) {
         }
     }
     
+    redisLog(REDIS_DEBUG, "nds_set(db=%i, key=%s) => REDIS_OK",
+             db->rdb->id, key);
     return REDIS_OK;
 }
 
@@ -347,13 +360,18 @@ static int nds_del(NDSDB *db, sds key) {
     rv = mdb_del(db->txn, db->dbi, &k, NULL);
     
     if (rv == MDB_NOTFOUND) {
-        return 0;
+        rv = 0;
     } else if (rv) {
         redisLog(REDIS_WARNING, "nds_del(%s) failed: %s", key, mdb_strerror(rv));
-        return -1;
+        rv = -1;
     } else {
-        return 1;
+        rv = 1;
     }
+    
+    redisLog(REDIS_DEBUG, "nds_del(db=%i, key=%s) => %i",
+             db->rdb->id, key, rv);
+
+    return rv;
 }
 
 robj *getNDS(redisDb *db, robj *key) {
@@ -378,18 +396,23 @@ robj *getNDS(redisDb *db, robj *key) {
 
         /* We got one!  Thaw and return */
         
-        /* Is the data valid? */
-        if (verifyDumpPayload((unsigned char *)val, (size_t)sdslen(val)) == REDIS_ERR) {
-            redisLog(REDIS_WARNING, "Invalid payload for key %s; ignoring", (char *)key->ptr);
-            goto nds_cleanup;
-        }
-        
         rioInitWithBuffer(&payload, val);
         if (((type = rdbLoadObjectType(&payload)) == -1) ||
             ((obj  = rdbLoadObject(type,&payload)) == NULL))
         {
             redisLog(REDIS_WARNING, "Bad data format for key %s; ignoring", (char *)key->ptr);
             goto nds_cleanup;
+        }
+        
+        if (obj) {
+            sds copy = sdsdup(key->ptr);
+            redisAssertWithInfo(NULL, key, dictAdd(db->dict, copy, obj) == REDIS_OK);
+            
+            if (rdbLoadType(&payload) == REDIS_RDB_OPCODE_EXPIRETIME_MS) {
+                long long expire = rdbLoadMillisecondTime(&payload);
+                redisLog(REDIS_DEBUG, "Setting expiry time to %lld", expire);
+                setExpire(db, key, expire);
+            }
         }
     }
 
@@ -400,7 +423,8 @@ nds_cleanup:
     return obj;
 }
 
-/* Return 0/1 based on a key's existence in NDS. */
+/* Return 0/1 based on a key's existence in NDS.  Doesn't bring the key into
+ * memory. */
 int existsNDS(redisDb *db, robj *key) {
     NDSDB *ndsdb = nds_open(db, 0);
     int rv;
@@ -431,6 +455,7 @@ int emptyNDS(redisDb *db) {
         redisLog(REDIS_WARNING, "Failed to empty DB: %s", mdb_strerror(rv));
     }
 
+    redisLog(REDIS_DEBUG, "emptyNDS(db=%i) => REDIS_OK", db->id);
     nds_close(ndsdb);
     return REDIS_OK;
 }
@@ -439,8 +464,6 @@ size_t keyCountNDS(redisDb *db) {
     NDSDB *ndsdb = nds_open(db, 0);
     int rv;
     MDB_stat stats;
-    
-    redisLog(REDIS_DEBUG, "Counting keys in NDS DB %i", db->id);
     
     if (!ndsdb) {
         return 0;
@@ -454,6 +477,8 @@ size_t keyCountNDS(redisDb *db) {
     
     nds_close(ndsdb);
     
+    redisLog(REDIS_DEBUG, "keyCountNDS(db=%i) => %llu",
+             db->id, stats.ms_entries);
     return stats.ms_entries;
 }
 
@@ -672,7 +697,6 @@ int flushDirtyKeys() {
         }
         
         while ((deKey = dictNext(di)) != NULL) {
-            rio payload;
             sds keystr = dictGetKey(deKey);
             deVal = dictFind(db->dict, keystr);
 
@@ -683,13 +707,28 @@ int flushDirtyKeys() {
             
             if (!deVal) {
                 /* Key must have been deleted after it got dirtied.  NUKE IT! */
+                redisLog(REDIS_DEBUG, "Deleting key '%s' from NDS", keystr);
                 if (nds_del(ndsdb, keystr) == -1) {
                     redisLog(REDIS_WARNING, "nds_del returned error, flush failed");
                     return REDIS_ERR;
                 }
             } else {
-                createDumpPayload(&payload, dictGetVal(deVal));
-                redisLog(REDIS_DEBUG, "Flushed %s (%llu serialized bytes)", keystr, sdslen(payload.io.buffer.ptr));
+                rio payload;
+                robj *kobj = createStringObject(keystr, sdslen(keystr));
+                robj *vobj = dictGetVal(deVal);
+                long long expire = getExpire(db, kobj);
+                
+                decrRefCount(kobj);
+                
+                rioInitWithBuffer(&payload,sdsempty());
+                redisAssert(rdbSaveObjectType(&payload,vobj));
+                redisAssert(rdbSaveObject(&payload,vobj));
+                if (expire >= 0) {
+                    redisLog(REDIS_DEBUG, "Saving expiry time of %s (%lld)", keystr, expire);
+                    redisAssert(rdbSaveType(&payload, REDIS_RDB_OPCODE_EXPIRETIME_MS));
+                    redisAssert(rdbSaveMillisecondTime(&payload, expire));
+                }
+                redisLog(REDIS_DEBUG, "Flushing %s (%llu serialized bytes)", keystr, sdslen(payload.io.buffer.ptr));
                 if (nds_set(ndsdb, keystr, payload.io.buffer.ptr) == REDIS_ERR) {
                     redisLog(REDIS_WARNING, "nds_set returned error, flush failed");
                     sdsfree(payload.io.buffer.ptr);
@@ -762,6 +801,8 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
             redisDb *db = server.db+i;
             dictIterator *di;
             dictEntry *de;
+            
+            redisLog(REDIS_DEBUG, "Merging %i flushing keys back into dirty keys for DB %i", dictSize(db->flushing_keys), i);
         
             di = dictGetSafeIterator(db->flushing_keys);
             if (!di) {
