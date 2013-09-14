@@ -1,3 +1,16 @@
+redis (2:2.6.16-0anchor5) squeeze wheezy; urgency=low
+
+  * Numerous improvements to freeMemoryIfNeeded to make it faster, less
+    likely to crap out, and remove keys that it really shouldn't (like the
+    only key in one DB when there's thousands of keys that could be removed
+    from another DB).
+  * Fix a couple of use-after-free and double-free bugs (found by yi huang).
+  * Lots and lots more debug logging.
+  * TTLs now get persisted to disk and loaded again.  No more never-expiring
+    keys!
+
+ -- Matt Palmer <mpalmer@debian.org>  Sat, 14 Sep 2013 10:55:15 +1000
+
 redis (2:2.6.16-0anchor4) squeeze wheezy; urgency=low
 
   * Deploy nds-watermark.  Very cool stuff.
