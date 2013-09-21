@@ -1,10 +1,31 @@
+# Makefile for liblmdb (Lightning memory-mapped database library).
+
+########################################################################
+# Configuration. The compiler options must enable threaded compilation.
+#
+# Preprocessor macros (for CPPFLAGS) of interest...
+# Note that the defaults should already be correct for most
+# platforms; you should not need to change any of these.
+# Read their descriptions in mdb.c if you do:
+#
+# - MDB_USE_POSIX_SEM
+# - MDB_DSYNC
+# - MDB_FDATASYNC
+# - MDB_USE_PWRITEV
+#
+# There may be other macros in mdb.c of interest. You should
+# read mdb.c before changing any of them.
+#
 CC	= gcc
 W	= -W -Wall -Wno-unused-parameter -Wbad-function-cast
+THREADS = -pthread
 OPT = -O2 -g
-CFLAGS	= -pthread $(OPT) $(W) $(XCFLAGS)
+CFLAGS	= $(THREADS) $(OPT) $(W) $(XCFLAGS)
 LDLIBS	=
 SOLIBS	=
 prefix	= /usr/local
+
+########################################################################
 
 IHDRS	= lmdb.h
 ILIBS	= liblmdb.a liblmdb.so
@@ -14,10 +35,10 @@ PROGS	= $(IPROGS) mtest mtest2 mtest3 mtest4 mtest5
 all:	$(ILIBS) $(PROGS)
 
 install: $(ILIBS) $(IPROGS) $(IHDRS)
-	cp $(IPROGS) $(DESTDIR)$(prefix)/bin
-	cp $(ILIBS) $(DESTDIR)$(prefix)/lib
-	cp $(IHDRS) $(DESTDIR)$(prefix)/include
-	cp $(IDOCS) $(DESTDIR)$(prefix)/man/man1
+	for f in $(IPROGS); do cp $$f $(DESTDIR)$(prefix)/bin; done
+	for f in $(ILIBS); do cp $$f $(DESTDIR)$(prefix)/lib; done
+	for f in $(IHDRS); do cp $$f $(DESTDIR)$(prefix)/include; done
+	for f in $(IDOCS); do cp $$f $(DESTDIR)$(prefix)/man/man1; done
 
 clean:
 	rm -rf $(PROGS) *.[ao] *.so *~ testdb
@@ -30,6 +51,7 @@ liblmdb.a:	mdb.o midl.o
 	ar rs $@ mdb.o midl.o
 
 liblmdb.so:	mdb.o midl.o
+#	$(CC) $(LDFLAGS) -pthread -shared -Wl,-Bsymbolic -o $@ mdb.o midl.o $(SOLIBS)
 	$(CC) $(LDFLAGS) -pthread -shared -o $@ mdb.o midl.o $(SOLIBS)
 
 mdb_stat: mdb_stat.o liblmdb.a
