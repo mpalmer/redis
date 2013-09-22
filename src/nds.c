@@ -509,8 +509,15 @@ int walkNDS(redisDb *db,
     
     rv = mdb_cursor_open(ndsdb->txn, ndsdb->dbi, &cur);
     if (rv) {
-        redisLog(REDIS_WARNING, "Failed to open MDB cursor: %s", mdb_strerror(rv));
-        rv = REDIS_ERR;
+        if (rv == EINVAL) {
+            /* EINVAL gets returned if we (amongst other things) ask to get a cursor
+             * for a "sub-database" that doesn't actually exist.  This is quite the
+             * pest. */
+            rv = REDIS_OK;
+        } else {
+            redisLog(REDIS_WARNING, "Failed to open MDB cursor: %s", mdb_strerror(rv));
+            rv = REDIS_ERR;
+        }
         goto cleanup;
     }
     
