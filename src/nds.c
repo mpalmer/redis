@@ -374,6 +374,12 @@ static int nds_del(NDSDB *db, sds key) {
     return rv;
 }
 
+/* Do the necessary bits and pieces required before a fork */
+void preforkNDS() {
+    mdb_env_close(server.mdb_env);
+    server.mdb_env = NULL;
+}
+
 robj *getNDS(redisDb *db, robj *key) {
     sds val = NULL;
     rio payload;
@@ -631,8 +637,7 @@ int backgroundDirtyKeysFlush() {
     
     server.dirty_before_bgsave = server.dirty;
     
-    mdb_env_close(server.mdb_env);
-    server.mdb_env = NULL;
+    preforkNDS();
 
     if ((childpid = fork()) == 0) {
         int retval;

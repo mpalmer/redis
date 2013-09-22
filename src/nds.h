@@ -35,6 +35,7 @@
 
 #include "redis.h"
 
+void   preforkNDS(void);
 robj  *getNDS(redisDb *db, robj *key);
 int    existsNDS(redisDb *db, robj *key);
 size_t keyCountNDS(redisDb *db);
@@ -43,20 +44,20 @@ int    walkNDS(redisDb *db,
                int (*walkerCallback)(void *data, robj *key),
                void *data,
                int interrupt_rate);
-void   preloadNDS();
-void   nukeNDSFromOrbit();
+void   preloadNDS(void);
+void   nukeNDSFromOrbit(void);
 
 void   touchDirtyKey(redisDb *db, sds sdskey);
 int    isDirtyKey(redisDb *db, sds sdskey);
 
-unsigned long long dirtyKeyCount();
-unsigned long long flushingKeyCount();
+unsigned long long dirtyKeyCount(void);
+unsigned long long flushingKeyCount(void);
 
-int    backgroundDirtyKeysFlush();
-int    flushDirtyKeys();
-void   postNDSFlushCleanup();
-void   backgroundNDSFlushDoneHandler();
-void   checkNDSChildComplete();
+int    backgroundDirtyKeysFlush(void);
+int    flushDirtyKeys(void);
+void   postNDSFlushCleanup(void);
+void   backgroundNDSFlushDoneHandler(int exitcode, int bysignal);
+void   checkNDSChildComplete(void);
 
 void   ndsCommand(redisClient *c);
 #endif

@@ -754,6 +754,7 @@ int rdbSaveBackground(char *filename) {
     server.lastbgsave_try = time(NULL);
 
     start = ustime();
+    preforkNDS();
     if ((childpid = fork()) == 0) {
         int retval;
 

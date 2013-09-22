@@ -30,6 +30,7 @@
 #include "redis.h"
 #include "bio.h"
 #include "rio.h"
+#include "nds.h"
 
 #include <signal.h>
 #include <fcntl.h>
@@ -957,6 +958,7 @@ int rewriteAppendOnlyFileBackground(void) {
     long long start;
 
     if (server.aof_child_pid != -1) return REDIS_ERR;
+    preforkNDS();
     start = ustime();
     if ((childpid = fork()) == 0) {
         char tmpfile[256];
