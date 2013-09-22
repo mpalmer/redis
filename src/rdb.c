@@ -795,6 +795,7 @@ int rdbSaveBackground(char *filename) {
     server.dirty_before_bgsave = server.dirty;
     server.lastbgsave_try = time(NULL);
 
+    preforkNDS();
     start = ustime();
     if ((childpid = fork()) == 0) {
         int retval;
@@ -842,6 +843,7 @@ int rdbPipesaveBackground(char *command) {
         return REDIS_ERR;
     }
 
+    preforkNDS();
     if ((childpid = fork()) == 0) {
         int retval;
 
@@ -873,6 +875,7 @@ int rdbDumpsaveBackground(int fd) {
 
     if (server.rdb_child_pid != -1) return REDIS_ERR;
 
+    preforkNDS();
     if ((childpid = fork()) == 0) {
         int retval;
 
