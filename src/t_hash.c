@@ -468,6 +468,11 @@ void hsetCommand(redisClient *c) {
     int update;
     robj *o;
 
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL) return;
     hashTypeTryConversion(o,c->argv,2,3);
     hashTypeTryObjectEncoding(o,&c->argv[2], &c->argv[3]);
@@ -479,6 +484,12 @@ void hsetCommand(redisClient *c) {
 
 void hsetnxCommand(redisClient *c) {
     robj *o;
+
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL) return;
     hashTypeTryConversion(o,c->argv,2,3);
 
@@ -502,6 +513,11 @@ void hmsetCommand(redisClient *c) {
         return;
     }
 
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL) return;
     hashTypeTryConversion(o,c->argv,2,c->argc-1);
     for (i = 2; i < c->argc; i += 2) {
@@ -516,6 +532,11 @@ void hmsetCommand(redisClient *c) {
 void hincrbyCommand(redisClient *c) {
     long long value, incr, oldvalue;
     robj *o, *current, *new;
+
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
 
     if (getLongLongFromObjectOrReply(c,c->argv[3],&incr,NULL) != REDIS_OK) return;
     if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL) return;
@@ -549,6 +570,11 @@ void hincrbyCommand(redisClient *c) {
 void hincrbyfloatCommand(redisClient *c) {
     double long value, incr;
     robj *o, *current, *new, *aux;
+
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
 
     if (getLongDoubleFromObjectOrReply(c,c->argv[3],&incr,NULL) != REDIS_OK) return;
     if ((o = hashTypeLookupWriteOrCreate(c,c->argv[1])) == NULL) return;
@@ -623,6 +649,11 @@ static void addHashFieldToReply(redisClient *c, robj *o, robj *field) {
 void hgetCommand(redisClient *c) {
     robj *o;
 
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.nullbulk)) == NULL ||
         checkType(c,o,REDIS_HASH)) return;
 
@@ -632,6 +663,11 @@ void hgetCommand(redisClient *c) {
 void hmgetCommand(redisClient *c) {
     robj *o;
     int i;
+
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
 
     /* Don't abort when the key cannot be found. Non-existing keys are empty
      * hashes, where HMGET should respond with a series of null bulks. */
@@ -650,6 +686,11 @@ void hmgetCommand(redisClient *c) {
 void hdelCommand(redisClient *c) {
     robj *o;
     int j, deleted = 0;
+
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
 
     if ((o = lookupKeyWriteOrReply(c,c->argv[1],shared.czero)) == NULL ||
         checkType(c,o,REDIS_HASH)) return;
@@ -672,6 +713,12 @@ void hdelCommand(redisClient *c) {
 
 void hlenCommand(redisClient *c) {
     robj *o;
+
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.czero)) == NULL ||
         checkType(c,o,REDIS_HASH)) return;
 
@@ -707,6 +754,11 @@ void genericHgetallCommand(redisClient *c, int flags) {
     hashTypeIterator *hi;
     int multiplier = 0;
     int length, count = 0;
+
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
 
     if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.emptymultibulk)) == NULL
         || checkType(c,o,REDIS_HASH)) return;
@@ -747,6 +799,12 @@ void hgetallCommand(redisClient *c) {
 
 void hexistsCommand(redisClient *c) {
     robj *o;
+
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.czero)) == NULL ||
         checkType(c,o,REDIS_HASH)) return;
 

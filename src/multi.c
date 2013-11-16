@@ -311,8 +311,14 @@ void watchCommand(redisClient *c) {
         addReplyError(c,"WATCH inside MULTI is not allowed");
         return;
     }
-    for (j = 1; j < c->argc; j++)
+    for (j = 1; j < c->argc; j++) {
+        if (validKey(c->argv[j]) == REDIS_ERR) {
+            addReply(c, shared.invalidkeyerr);
+            return;
+        }
+
         watchForKey(c,c->argv[j]);
+    }
     addReply(c,shared.ok);
 }
 

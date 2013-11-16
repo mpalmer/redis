@@ -251,6 +251,11 @@ void saddCommand(redisClient *c) {
     robj *set;
     int j, added = 0;
 
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     set = lookupKeyWrite(c->db,c->argv[1]);
     if (set == NULL) {
         set = setTypeCreate(c->argv[2]);
@@ -274,6 +279,11 @@ void saddCommand(redisClient *c) {
 void sremCommand(redisClient *c) {
     robj *set;
     int j, deleted = 0;
+
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
 
     if ((set = lookupKeyWriteOrReply(c,c->argv[1],shared.czero)) == NULL ||
         checkType(c,set,REDIS_SET)) return;
@@ -299,6 +309,11 @@ void smoveCommand(redisClient *c) {
     srcset = lookupKeyWrite(c->db,c->argv[1]);
     dstset = lookupKeyWrite(c->db,c->argv[2]);
     ele = c->argv[3] = tryObjectEncoding(c->argv[3]);
+
+    if (validKey(c->argv[1]) == REDIS_ERR || validKey(c->argv[2]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
 
     /* If the source key does not exist return 0 */
     if (srcset == NULL) {
@@ -343,6 +358,11 @@ void smoveCommand(redisClient *c) {
 void sismemberCommand(redisClient *c) {
     robj *set;
 
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     if ((set = lookupKeyReadOrReply(c,c->argv[1],shared.czero)) == NULL ||
         checkType(c,set,REDIS_SET)) return;
 
@@ -356,6 +376,11 @@ void sismemberCommand(redisClient *c) {
 void scardCommand(redisClient *c) {
     robj *o;
 
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.czero)) == NULL ||
         checkType(c,o,REDIS_SET)) return;
 
@@ -366,6 +391,11 @@ void spopCommand(redisClient *c) {
     robj *set, *ele, *aux;
     int64_t llele;
     int encoding;
+
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
 
     if ((set = lookupKeyWriteOrReply(c,c->argv[1],shared.nullbulk)) == NULL ||
         checkType(c,set,REDIS_SET)) return;
@@ -408,6 +438,11 @@ void srandmemberWithCountCommand(redisClient *c) {
     int encoding;
 
     dict *d;
+
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
 
     if (getLongFromObjectOrReply(c,c->argv[2],&l,NULL) != REDIS_OK) return;
     if (l >= 0) {
@@ -542,6 +577,11 @@ void srandmemberCommand(redisClient *c) {
     int64_t llele;
     int encoding;
 
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     if (c->argc == 3) {
         srandmemberWithCountCommand(c);
         return;
@@ -573,6 +613,13 @@ void sinterGenericCommand(redisClient *c, robj **setkeys, unsigned long setnum, 
     void *replylen = NULL;
     unsigned long j, cardinality = 0;
     int encoding;
+
+    for (j = 1; j < c->argc; j++) {
+        if (validKey(c->argv[j]) == REDIS_ERR) {
+            addReply(c, shared.invalidkeyerr);
+            return;
+        }
+    }
 
     for (j = 0; j < setnum; j++) {
         robj *setobj = dstkey ?
@@ -712,6 +759,13 @@ void sunionDiffGenericCommand(redisClient *c, robj **setkeys, int setnum, robj *
     setTypeIterator *si;
     robj *ele, *dstset = NULL;
     int j, cardinality = 0;
+
+    for (j = 1; j < c->argc; j++) {
+        if (validKey(c->argv[j]) == REDIS_ERR) {
+            addReply(c, shared.invalidkeyerr);
+            return;
+        }
+    }
 
     for (j = 0; j < setnum; j++) {
         robj *setobj = dstkey ?

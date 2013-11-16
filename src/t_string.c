@@ -65,6 +65,11 @@ static int checkStringLength(redisClient *c, long long size) {
 void setGenericCommand(redisClient *c, int flags, robj *key, robj *val, robj *expire, int unit, robj *ok_reply, robj *abort_reply) {
     long long milliseconds = 0; /* initialized to avoid any harmness warning */
 
+    if (validKey(key) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     if (expire) {
         if (getLongLongFromObjectOrReply(c, expire, &milliseconds, NULL) != REDIS_OK)
             return;
@@ -142,6 +147,11 @@ void psetexCommand(redisClient *c) {
 int getGenericCommand(redisClient *c) {
     robj *o;
 
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return REDIS_ERR;
+    }
+
     if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.nullbulk)) == NULL)
         return REDIS_OK;
 
@@ -169,6 +179,11 @@ void setrangeCommand(redisClient *c) {
     robj *o;
     long offset;
     sds value = c->argv[3]->ptr;
+
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
 
     if (getLongFromObjectOrReply(c,c->argv[2],&offset,NULL) != REDIS_OK)
         return;
@@ -234,6 +249,11 @@ void getrangeCommand(redisClient *c) {
     char *str, llbuf[32];
     size_t strlen;
 
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     if (getLongFromObjectOrReply(c,c->argv[2],&start,NULL) != REDIS_OK)
         return;
     if (getLongFromObjectOrReply(c,c->argv[3],&end,NULL) != REDIS_OK)
@@ -268,6 +288,13 @@ void getrangeCommand(redisClient *c) {
 void mgetCommand(redisClient *c) {
     int j;
 
+    for (j = 1; j < c->argc; j++) {
+        if (validKey(c->argv[1]) == REDIS_ERR) {
+            addReply(c, shared.invalidkeyerr);
+            return;
+        }
+    }
+
     addReplyMultiBulkLen(c,c->argc-1);
     for (j = 1; j < c->argc; j++) {
         robj *o = lookupKeyRead(c->db,c->argv[j]);
@@ -294,6 +321,10 @@ void msetGenericCommand(redisClient *c, int nx) {
      * set nothing at all if at least one already key exists. */
     if (nx) {
         for (j = 1; j < c->argc; j += 2) {
+            if (validKey(c->argv[j]) == REDIS_ERR) {
+                addReply(c, shared.invalidkeyerr);
+                return;
+            }
             if (lookupKeyWrite(c->db,c->argv[j]) != NULL) {
                 busykeys++;
             }
@@ -305,6 +336,10 @@ void msetGenericCommand(redisClient *c, int nx) {
     }
 
     for (j = 1; j < c->argc; j += 2) {
+        if (validKey(c->argv[j]) == REDIS_ERR) {
+            addReply(c, shared.invalidkeyerr);
+            return;
+        }
         c->argv[j+1] = tryObjectEncoding(c->argv[j+1]);
         setKey(c->db,c->argv[j],c->argv[j+1]);
     }
@@ -323,6 +358,11 @@ void msetnxCommand(redisClient *c) {
 void incrDecrCommand(redisClient *c, long long incr) {
     long long value, oldvalue;
     robj *o, *new;
+
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
 
     o = lookupKeyWrite(c->db,c->argv[1]);
     if (o != NULL && checkType(c,o,REDIS_STRING)) return;
@@ -373,6 +413,11 @@ void incrbyfloatCommand(redisClient *c) {
     long double incr, value;
     robj *o, *new, *aux;
 
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     o = lookupKeyWrite(c->db,c->argv[1]);
     if (o != NULL && checkType(c,o,REDIS_STRING)) return;
     if (getLongDoubleFromObjectOrReply(c,o,&value,NULL) != REDIS_OK ||
@@ -405,6 +450,11 @@ void incrbyfloatCommand(redisClient *c) {
 void appendCommand(redisClient *c) {
     size_t totlen;
     robj *o, *append;
+
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
 
     o = lookupKeyWrite(c->db,c->argv[1]);
     if (o == NULL) {
@@ -443,6 +493,12 @@ void appendCommand(redisClient *c) {
 
 void strlenCommand(redisClient *c) {
     robj *o;
+
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.czero)) == NULL ||
         checkType(c,o,REDIS_STRING)) return;
     addReplyLongLong(c,stringObjectLen(o));

@@ -57,10 +57,32 @@ int loadKey(redisDb *db, robj *key) {
     }
 }
 
+/* Determine whether or not a key name is valid or not, given the current
+ * database storage in use.
+ * Returns REDIS_OK if the key is valid, or REDIS_ERR otherwise.  */
+int validKey(robj *key) {
+    if (!server.nds) {
+        /* I believe that, in theory, Redis only supports keys up to
+         * 2^31 bytes in length.  I'm happy to consider that a "will
+         * never happen" event. */
+        return REDIS_OK;
+    }
+    
+    if (sdslen(key->ptr) == 0 || sdslen(key->ptr) > 511) {
+        return REDIS_ERR;
+    }
+    
+    return REDIS_OK;
+}
+
 robj *lookupKey(redisDb *db, robj *key) {
     robj *val = NULL;
     dictEntry *de = dictFind(db->dict,key->ptr);
 
+    if (validKey(key) == REDIS_ERR) {
+        return NULL;
+    }
+    
     if (de) {
         val = dictGetVal(de);
     }
@@ -92,6 +114,10 @@ robj *lookupKey(redisDb *db, robj *key) {
 robj *lookupKeyRead(redisDb *db, robj *key) {
     robj *val;
 
+    if (validKey(key) == REDIS_ERR) {
+        return NULL;
+    }
+    
     expireIfNeeded(db,key);
     val = lookupKey(db,key);
     if (val == NULL)
@@ -123,8 +149,15 @@ robj *lookupKeyWriteOrReply(redisClient *c, robj *key, robj *reply) {
  *
  * The program is aborted if the key already exists. */
 void dbAdd(redisDb *db, robj *key, robj *val) {
-    sds copy = sdsdup(key->ptr);
-    int retval = dictAdd(db->dict, copy, val);
+    sds copy;
+    int retval;
+    
+    if (validKey(key) == REDIS_ERR) {
+        return;
+    }
+    
+    copy = sdsdup(key->ptr);
+    retval = dictAdd(db->dict, copy, val);
 
     redisAssertWithInfo(NULL,key,retval == REDIS_OK);
     
@@ -141,6 +174,10 @@ void dbAdd(redisDb *db, robj *key, robj *val) {
 void dbOverwrite(redisDb *db, robj *key, robj *val) {
     struct dictEntry *de = dictFind(db->dict,key->ptr);
     
+    if (validKey(key) == REDIS_ERR) {
+        return;
+    }
+    
     redisAssertWithInfo(NULL,key,de != NULL);
     if (server.nds) {
         touchDirtyKey(db, key->ptr);
@@ -155,6 +192,10 @@ void dbOverwrite(redisDb *db, robj *key, robj *val) {
  * 2) clients WATCHing for the destination key notified.
  * 3) The expire time of the key is reset (the key is made persistent). */
 void setKey(redisDb *db, robj *key, robj *val) {
+    if (validKey(key) == REDIS_ERR) {
+        return;
+    }
+    
     if (lookupKeyWrite(db,key) == NULL) {
         dbAdd(db,key,val);
     } else {
@@ -199,6 +240,10 @@ robj *dbRandomKey(redisDb *db) {
 int dbDelete(redisDb *db, robj *key) {
     int delcount = 0;
 
+    if (validKey(key) == REDIS_ERR) {
+        return -1;
+    }
+    
     /* Deleting an entry from the expires dict will not free the sds of
      * the key, because it is shared with the main dictionary. */
     if (dictSize(db->expires) > 0) dictDelete(db->expires,key->ptr);
@@ -301,6 +346,13 @@ void delCommand(redisClient *c) {
     int deleted = 0, j;
 
     for (j = 1; j < c->argc; j++) {
+        if (validKey(c->argv[j]) == REDIS_ERR) {
+            addReply(c, shared.invalidkeyerr);
+            return;
+        }
+    }
+    
+    for (j = 1; j < c->argc; j++) {
         if (dbDelete(c->db,c->argv[j])) {
             signalModifiedKey(c->db,c->argv[j]);
             server.dirty++;
@@ -311,6 +363,11 @@ void delCommand(redisClient *c) {
 }
 
 void existsCommand(redisClient *c) {
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+    
     expireIfNeeded(c->db,c->argv[1]);
     if (dbExists(c->db,c->argv[1])) {
         addReply(c, shared.cone);
@@ -666,6 +723,11 @@ void expireGenericCommand(redisClient *c, long long basetime, int unit) {
     robj *key = c->argv[1], *param = c->argv[2];
     long long when; /* unix time in milliseconds when the key will expire. */
 
+    if (validKey(key) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     if (getLongLongFromObjectOrReply(c, param, &when, NULL) != REDIS_OK)
         return;
 
@@ -725,6 +787,11 @@ void pexpireatCommand(redisClient *c) {
 void ttlGenericCommand(redisClient *c, int output_ms) {
     long long expire, ttl = -1;
 
+    if (validKey(c->argv[1])) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     if (server.nds) {
         /* Key needs to be in memory to get TTL */
         loadKey(c->db, c->argv[1]);
@@ -752,6 +819,11 @@ void pttlCommand(redisClient *c) {
 void persistCommand(redisClient *c) {
     dictEntry *de;
 
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+    
     if (server.nds) {
         /* Key needs to be in memory to manipulate TTL */
         loadKey(c->db, c->argv[1]);
