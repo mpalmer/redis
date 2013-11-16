@@ -848,6 +848,11 @@ void zaddGenericCommand(redisClient *c, int incr) {
     int j, elements = (c->argc-2)/2;
     int added = 0, updated = 0;
 
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     if (c->argc % 2) {
         addReply(c,shared.syntaxerr);
         return;
@@ -986,6 +991,11 @@ void zremCommand(redisClient *c) {
     robj *zobj;
     int deleted = 0, keyremoved = 0, j;
 
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     if ((zobj = lookupKeyWriteOrReply(c,key,shared.czero)) == NULL ||
         checkType(c,zobj,REDIS_ZSET)) return;
 
@@ -1046,6 +1056,11 @@ void zremrangebyscoreCommand(redisClient *c) {
     int keyremoved = 0;
     unsigned long deleted;
 
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     /* Parse the range arguments. */
     if (zslParseRange(c->argv[2],c->argv[3],&range) != REDIS_OK) {
         addReplyError(c,"min or max is not a float");
@@ -1091,6 +1106,11 @@ void zremrangebyrankCommand(redisClient *c) {
     int llen;
     unsigned long deleted;
     int keyremoved = 0;
+
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
 
     if ((getLongFromObjectOrReply(c, c->argv[2], &start, NULL) != REDIS_OK) ||
         (getLongFromObjectOrReply(c, c->argv[3], &end, NULL) != REDIS_OK)) return;
@@ -1506,6 +1526,13 @@ void zunionInterGenericCommand(redisClient *c, robj *dstkey, int op) {
     zskiplistNode *znode;
     int touched = 0;
 
+    for (j = 1; j < c->argc; j++) {
+        if (validKey(c->argv[j]) == REDIS_ERR) {
+            addReply(c, shared.invalidkeyerr);
+            return;
+        }
+    }
+
     /* expect setnum input keys to be given */
     if ((getLongFromObjectOrReply(c, c->argv[2], &setnum, NULL) != REDIS_OK))
         return;
@@ -1725,6 +1752,11 @@ void zrangeGenericCommand(redisClient *c, int reverse) {
     int llen;
     int rangelen;
 
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     if ((getLongFromObjectOrReply(c, c->argv[2], &start, NULL) != REDIS_OK) ||
         (getLongFromObjectOrReply(c, c->argv[3], &end, NULL) != REDIS_OK)) return;
 
@@ -1836,6 +1868,11 @@ void genericZrangebyscoreCommand(redisClient *c, int reverse) {
     unsigned long rangelen = 0;
     void *replylen = NULL;
     int minidx, maxidx;
+
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
 
     /* Parse the range arguments. */
     if (reverse) {
@@ -2027,6 +2064,11 @@ void zcountCommand(redisClient *c) {
     zrangespec range;
     int count = 0;
 
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     /* Parse the range arguments */
     if (zslParseRange(c->argv[2],c->argv[3],&range) != REDIS_OK) {
         addReplyError(c,"min or max is not a float");
@@ -2102,6 +2144,11 @@ void zcardCommand(redisClient *c) {
     robj *key = c->argv[1];
     robj *zobj;
 
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     if ((zobj = lookupKeyReadOrReply(c,key,shared.czero)) == NULL ||
         checkType(c,zobj,REDIS_ZSET)) return;
 
@@ -2112,6 +2159,11 @@ void zscoreCommand(redisClient *c) {
     robj *key = c->argv[1];
     robj *zobj;
     double score;
+
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
 
     if ((zobj = lookupKeyReadOrReply(c,key,shared.nullbulk)) == NULL ||
         checkType(c,zobj,REDIS_ZSET)) return;
@@ -2144,6 +2196,11 @@ void zrankGenericCommand(redisClient *c, int reverse) {
     robj *zobj;
     unsigned long llen;
     unsigned long rank;
+
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
 
     if ((zobj = lookupKeyReadOrReply(c,key,shared.nullbulk)) == NULL ||
         checkType(c,zobj,REDIS_ZSET)) return;

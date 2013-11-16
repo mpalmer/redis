@@ -282,6 +282,11 @@ void debugCommand(redisClient *c) {
         robj *val;
         char *strenc;
 
+        if (validKey(c->argv[2]) == REDIS_ERR) {
+            addReply(c, shared.invalidkeyerr);
+            return;
+        }
+    
         if ((de = dictFind(c->db->dict,c->argv[2]->ptr)) == NULL) {
             addReply(c,shared.nokeyerr);
             return;
@@ -300,6 +305,11 @@ void debugCommand(redisClient *c) {
         dictEntry *de;
         robj *val;
         sds key;
+
+        if (validKey(c->argv[2]) == REDIS_ERR) {
+            addReply(c, shared.invalidkeyerr);
+            return;
+        }
 
         if ((de = dictFind(c->db->dict,c->argv[2]->ptr)) == NULL) {
             addReply(c,shared.nokeyerr);
@@ -323,6 +333,11 @@ void debugCommand(redisClient *c) {
         long keys, j;
         robj *key, *val;
         char buf[128];
+
+        if (validKey(c->argv[2]) == REDIS_ERR) {
+            addReply(c, shared.invalidkeyerr);
+            return;
+        }
 
         if (getLongFromObjectOrReply(c, c->argv[2], &keys, NULL) != REDIS_OK)
             return;

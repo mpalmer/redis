@@ -1244,6 +1244,8 @@ void createSharedObjects(void) {
         "-WRONGTYPE Operation against a key holding the wrong kind of value\r\n"));
     shared.nokeyerr = createObject(REDIS_STRING,sdsnew(
         "-ERR no such key\r\n"));
+    shared.invalidkeyerr = createObject(REDIS_STRING,sdsnew(
+        "-ERR invalid key name\r\n"));
     shared.syntaxerr = createObject(REDIS_STRING,sdsnew(
         "-ERR syntax error\r\n"));
     shared.sameobjecterr = createObject(REDIS_STRING,sdsnew(

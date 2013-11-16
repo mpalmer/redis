@@ -197,6 +197,11 @@ void sortCommand(redisClient *c) {
     robj *sortval, *sortby = NULL, *storekey = NULL;
     redisSortObject *vector; /* Resulting vector to sort */
 
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     /* Lookup the key to sort. It must be of the right types */
     sortval = lookupKeyRead(c->db,c->argv[1]);
     if (sortval && sortval->type != REDIS_SET &&

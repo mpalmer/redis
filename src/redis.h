@@ -500,7 +500,7 @@ struct saveparam {
 
 struct sharedObjectsStruct {
     robj *crlf, *ok, *err, *emptybulk, *czero, *cone, *cnegone, *pong, *space,
-    *colon, *nullbulk, *nullmultibulk, *queued,
+    *colon, *nullbulk, *nullmultibulk, *queued, *invalidkeyerr,
     *emptymultibulk, *wrongtypeerr, *nokeyerr, *syntaxerr, *sameobjecterr,
     *outofrangeerr, *noscripterr, *loadingerr, *slowscripterr, *bgsaveerr,
     *masterdownerr, *roslaveerr, *execaborterr, *noautherr, *noreplicaserr,
@@ -1357,6 +1357,7 @@ robj *lookupKeyReadOrReply(redisClient *c, robj *key, robj *reply);
 robj *lookupKeyWriteOrReply(redisClient *c, robj *key, robj *reply);
 void dbAdd(redisDb *db, robj *key, robj *val);
 void dbOverwrite(redisDb *db, robj *key, robj *val);
+int validKey(robj *key);
 void setKey(redisDb *db, robj *key, robj *val);
 int dbExists(redisDb *db, robj *key);
 robj *dbRandomKey(redisDb *db);

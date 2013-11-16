@@ -296,8 +296,16 @@ void listTypeConvert(robj *subject, int enc) {
 
 void pushGenericCommand(redisClient *c, int where) {
     int j, waiting = 0, pushed = 0;
-    robj *lobj = lookupKeyWrite(c->db,c->argv[1]);
-    int may_have_waiting_clients = (lobj == NULL);
+    robj *lobj;
+    int may_have_waiting_clients;
+
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
+    lobj = lookupKeyWrite(c->db,c->argv[1]);
+    may_have_waiting_clients = (lobj == NULL);
 
     if (lobj && lobj->type != REDIS_LIST) {
         addReply(c,shared.wrongtypeerr);
@@ -338,6 +346,11 @@ void pushxGenericCommand(redisClient *c, robj *refval, robj *val, int where) {
     listTypeIterator *iter;
     listTypeEntry entry;
     int inserted = 0;
+
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
 
     if ((subject = lookupKeyReadOrReply(c,c->argv[1],shared.czero)) == NULL ||
         checkType(c,subject,REDIS_LIST)) return;
@@ -409,13 +422,27 @@ void linsertCommand(redisClient *c) {
 }
 
 void llenCommand(redisClient *c) {
-    robj *o = lookupKeyReadOrReply(c,c->argv[1],shared.czero);
+    robj *o;
+    
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
+    o = lookupKeyReadOrReply(c,c->argv[1],shared.czero);
     if (o == NULL || checkType(c,o,REDIS_LIST)) return;
     addReplyLongLong(c,listTypeLength(o));
 }
 
 void lindexCommand(redisClient *c) {
-    robj *o = lookupKeyReadOrReply(c,c->argv[1],shared.nullbulk);
+    robj *o;
+    
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
+    o = lookupKeyReadOrReply(c,c->argv[1],shared.nullbulk);
     if (o == NULL || checkType(c,o,REDIS_LIST)) return;
     long index;
     robj *value = NULL;
@@ -454,7 +481,14 @@ void lindexCommand(redisClient *c) {
 }
 
 void lsetCommand(redisClient *c) {
-    robj *o = lookupKeyWriteOrReply(c,c->argv[1],shared.nokeyerr);
+    robj *o;
+    
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
+    o = lookupKeyWriteOrReply(c,c->argv[1],shared.nokeyerr);
     if (o == NULL || checkType(c,o,REDIS_LIST)) return;
     long index;
     robj *value = (c->argv[3] = tryObjectEncoding(c->argv[3]));
@@ -497,7 +531,14 @@ void lsetCommand(redisClient *c) {
 }
 
 void popGenericCommand(redisClient *c, int where) {
-    robj *o = lookupKeyWriteOrReply(c,c->argv[1],shared.nullbulk);
+    robj *o;
+    
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
+    o = lookupKeyWriteOrReply(c,c->argv[1],shared.nullbulk);
     if (o == NULL || checkType(c,o,REDIS_LIST)) return;
 
     robj *value = listTypePop(o,where);
@@ -530,6 +571,11 @@ void rpopCommand(redisClient *c) {
 void lrangeCommand(redisClient *c) {
     robj *o;
     long start, end, llen, rangelen;
+
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
 
     if ((getLongFromObjectOrReply(c, c->argv[2], &start, NULL) != REDIS_OK) ||
         (getLongFromObjectOrReply(c, c->argv[3], &end, NULL) != REDIS_OK)) return;
@@ -592,6 +638,11 @@ void ltrimCommand(redisClient *c) {
     list *list;
     listNode *ln;
 
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     if ((getLongFromObjectOrReply(c, c->argv[2], &start, NULL) != REDIS_OK) ||
         (getLongFromObjectOrReply(c, c->argv[3], &end, NULL) != REDIS_OK)) return;
 
@@ -650,6 +701,11 @@ void lremCommand(redisClient *c) {
     long toremove;
     long removed = 0;
     listTypeEntry entry;
+
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
 
     if ((getLongFromObjectOrReply(c, c->argv[2], &toremove, NULL) != REDIS_OK))
         return;
@@ -720,6 +776,12 @@ void rpoplpushHandlePush(redisClient *c, robj *dstkey, robj *dstobj, robj *value
 
 void rpoplpushCommand(redisClient *c) {
     robj *sobj, *value;
+
+    if (validKey(c->argv[1]) == REDIS_ERR || validKey(c->argv[2]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     if ((sobj = lookupKeyWriteOrReply(c,c->argv[1],shared.nullbulk)) == NULL ||
         checkType(c,sobj,REDIS_LIST)) return;
 
@@ -1060,6 +1122,13 @@ void blockingPopGenericCommand(redisClient *c, int where) {
     time_t timeout;
     int j;
 
+    for (j = 1; j < c->argc-1; j++) {
+        if (validKey(c->argv[1]) == REDIS_ERR) {
+            addReply(c, shared.invalidkeyerr);
+            return;
+        }
+    }
+
     if (getTimeoutFromObjectOrReply(c,c->argv[c->argc-1],&timeout) != REDIS_OK)
         return;
 
@@ -1121,6 +1190,11 @@ void brpopCommand(redisClient *c) {
 
 void brpoplpushCommand(redisClient *c) {
     time_t timeout;
+
+    if (validKey(c->argv[1]) == REDIS_ERR || validKey(c->argv[2]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
 
     if (getTimeoutFromObjectOrReply(c,c->argv[3],&timeout) != REDIS_OK)
         return;

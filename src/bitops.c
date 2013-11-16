@@ -111,6 +111,11 @@ void setbitCommand(redisClient *c) {
     int byteval, bitval;
     long on;
 
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     if (getBitOffsetFromArgument(c,c->argv[2],&bitoffset) != REDIS_OK)
         return;
 
@@ -166,6 +171,11 @@ void getbitCommand(redisClient *c) {
     size_t byte, bit;
     size_t bitval = 0;
 
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+
     if (getBitOffsetFromArgument(c,c->argv[2],&bitoffset) != REDIS_OK)
         return;
 
@@ -195,6 +205,13 @@ void bitopCommand(redisClient *c) {
     long *len, maxlen = 0; /* Array of length of src strings, and max len. */
     long minlen = 0;    /* Min len among the input keys. */
     unsigned char *res = NULL; /* Resulting string. */
+
+    for (j = 1; j < c->argc; j++) {
+        if (validKey(c->argv[j]) == REDIS_ERR) {
+            addReply(c, shared.invalidkeyerr);
+            return;
+        }
+    }
 
     /* Parse the operation name. */
     if ((opname[0] == 'a' || opname[0] == 'A') && !strcasecmp(opname,"and"))
@@ -364,6 +381,11 @@ void bitcountCommand(redisClient *c) {
     unsigned char *p;
     char llbuf[32];
 
+    if (validKey(c->argv[1]) == REDIS_ERR) {
+        addReply(c, shared.invalidkeyerr);
+        return;
+    }
+    
     /* Lookup, check for type, and return 0 for non existing keys. */
     if ((o = lookupKeyReadOrReply(c,c->argv[1],shared.czero)) == NULL ||
         checkType(c,o,REDIS_STRING)) return;
