@@ -91,7 +91,6 @@ static void nds_close(NDSDB *ndsdb) {
  */
 static NDSDB *nds_open(redisDb *db, int writer) {
     int rv;
-    NDS_TIMER_START;
 
     redisLog(REDIS_DEBUG, "nds_open(db=%i, writer=%i), ref=%i", db->id, writer, server.ndsdb.refs);
 
@@ -239,7 +238,6 @@ err_cleanup:
     nds_close(&server.ndsdb);
 
 done:
-    NDS_TIMER_END;
     return &server.ndsdb;    
 }
 
@@ -280,7 +278,6 @@ static void uncache_key(redisDb *db, sds key) {
 static int nds_exists(NDSDB *db, sds key) {
     MDB_val k, v;
     int rv;
-    NDS_TIMER_START;
     
     if (not_in_keycache(db->rdb, key)) {
         return 0;
@@ -295,13 +292,11 @@ static int nds_exists(NDSDB *db, sds key) {
         redisLog(REDIS_DEBUG,
                  "nds_exists(db=%i, key=%s) => NOT_IN_MEMORY",
                  db->rdb->id, key);
-        NDS_TIMER_END;
         return 0;
     }
     
     if (sdslen(key) > MDB_MAXKEYSIZE) {
         redisLog(REDIS_WARNING, "Passed excessively long key to nds_exists");
-        NDS_TIMER_END;
         return -1;
     }
     
@@ -317,7 +312,6 @@ static int nds_exists(NDSDB *db, sds key) {
     }
 
     redisLog(REDIS_DEBUG, "nds_exists(db=%i, key=%s) => %i", db->rdb->id, key, rv);
-    NDS_TIMER_END;
     return rv;
 }
 
@@ -327,7 +321,6 @@ static int nds_exists(NDSDB *db, sds key) {
 static sds nds_get(NDSDB *db, sds key) {
     MDB_val k, v;
     int rv;
-    NDS_TIMER_START;
 
     if (not_in_keycache(db->rdb, key)) {
         return NULL;
@@ -345,13 +338,11 @@ static sds nds_get(NDSDB *db, sds key) {
         redisLog(REDIS_DEBUG,
                  "nds_get(db=%i, key=%s) => NOT_IN_MEMORY",
                  db->rdb->id, key); 
-        NDS_TIMER_END;
         return NULL;
     }
     
     if (sdslen(key) > MDB_MAXKEYSIZE) {
         redisLog(REDIS_WARNING, "Passed excessively long key to nds_get");
-        NDS_TIMER_END;
         return NULL;
     }
 
@@ -364,13 +355,11 @@ static sds nds_get(NDSDB *db, sds key) {
         } else {
             redisLog(REDIS_WARNING, "mdb_get(%s) failed: %s", key, mdb_strerror(rv));
         }
-        NDS_TIMER_END;
         return NULL;
     }
     
     redisLog(REDIS_DEBUG, "nds_get(db=>%i, key=%s) => %i byte value",
              db->rdb->id, key, v.mv_size);
-    NDS_TIMER_END;
     return sdsnewlen(v.mv_data, v.mv_size);
 }
 
@@ -380,7 +369,6 @@ static sds nds_get(NDSDB *db, sds key) {
 static int nds_set(NDSDB *db, sds key, sds val) {
     int rv = REDIS_OK;
     MDB_val k, v;
-    NDS_TIMER_START;
     
     k.mv_size = sdslen(key);
     k.mv_data = key;
@@ -390,13 +378,11 @@ static int nds_set(NDSDB *db, sds key, sds val) {
     
     if (sdslen(key) > MDB_MAXKEYSIZE) {
         redisLog(REDIS_WARNING, "Passed excessively long key to nds_set");
-        NDS_TIMER_END;
         return REDIS_ERR;
     }
     
     if (sdslen(val) > MDB_MAXDATASIZE) {
         redisLog(REDIS_WARNING, "Key %s has an excessively long value", key);
-        NDS_TIMER_END;
         return REDIS_ERR;
     }
     
@@ -405,7 +391,6 @@ static int nds_set(NDSDB *db, sds key, sds val) {
     
     if (rv) {
         redisLog(REDIS_WARNING, "mdb_put(%s) failed: %s", key, mdb_strerror(rv));
-        NDS_TIMER_END;
         return REDIS_ERR;
     }
     
@@ -425,7 +410,6 @@ static int nds_set(NDSDB *db, sds key, sds val) {
     
     redisLog(REDIS_DEBUG, "nds_set(db=%i, key=%s) => REDIS_OK",
              db->rdb->id, key);
-    NDS_TIMER_END;
     return REDIS_OK;
 }
 
@@ -435,7 +419,6 @@ static int nds_set(NDSDB *db, sds key, sds val) {
 static int nds_del(NDSDB *db, sds key) {
     MDB_val k;
     int rv;
-    NDS_TIMER_START;
     
     k.mv_size = sdslen(key);
     k.mv_data = key;
@@ -454,7 +437,6 @@ static int nds_del(NDSDB *db, sds key) {
     redisLog(REDIS_DEBUG, "nds_del(db=%i, key=%s) => %i",
              db->rdb->id, key, rv);
 
-    NDS_TIMER_END;
     return rv;
 }
 
@@ -470,6 +452,7 @@ robj *getNDS(redisDb *db, robj *key) {
     int type;
     robj *obj = NULL;
     NDSDB *ndsdb = nds_open(db, 0);
+    NDS_TIMER_START;
     
     redisLog(REDIS_DEBUG, "Looking up %s in NDS", (char *)key->ptr);
 
@@ -482,7 +465,6 @@ robj *getNDS(redisDb *db, robj *key) {
     nds_close(ndsdb);
     
     if (val) {
-        NDS_TIMER_START;
         redisLog(REDIS_DEBUG, "Key %s was found in NDS", (char *)key->ptr);
 
         /* We got one!  Thaw and return */
@@ -492,7 +474,6 @@ robj *getNDS(redisDb *db, robj *key) {
             ((obj  = rdbLoadObject(type,&payload)) == NULL))
         {
             redisLog(REDIS_WARNING, "Bad data format for key %s; ignoring", (char *)key->ptr);
-            NDS_TIMER_END;
             goto nds_cleanup;
         }
         
@@ -506,13 +487,13 @@ robj *getNDS(redisDb *db, robj *key) {
                 setExpire(db, key, expire);
             }
         }
-        NDS_TIMER_END;
     }
 
 nds_cleanup:
     if (val) {
         sdsfree(val);
     }
+    NDS_TIMER_END;
     return obj;
 }
 
@@ -521,6 +502,7 @@ nds_cleanup:
 int existsNDS(redisDb *db, robj *key) {
     NDSDB *ndsdb = nds_open(db, 0);
     int rv;
+    NDS_TIMER_START;
 
     redisLog(REDIS_DEBUG, "Checking for existence of %s in NDS", (char *)key->ptr);
     
@@ -531,14 +513,15 @@ int existsNDS(redisDb *db, robj *key) {
     rv = nds_exists(ndsdb, key->ptr);
     nds_close(ndsdb);
     
+    NDS_TIMER_END;
     return rv;
 }
 
 /* Remove all keys from an NDS database. */
 int emptyNDS(redisDb *db) {
-    NDS_TIMER_START;
     NDSDB *ndsdb = nds_open(db, 1);
     int rv;
+    NDS_TIMER_START;
 
     if (!ndsdb) {
         redisLog(REDIS_WARNING, "Failed to open DB %i", db->id);
@@ -556,10 +539,10 @@ int emptyNDS(redisDb *db) {
 }
 
 size_t keyCountNDS(redisDb *db) {
-    NDS_TIMER_START;
     NDSDB *ndsdb = nds_open(db, 0);
     int rv;
     MDB_stat stats;
+    NDS_TIMER_START;
     
     if (!ndsdb) {
         return 0;
@@ -591,6 +574,7 @@ int walkNDS(redisDb *db,
     NDSDB *ndsdb = NULL;
     MDB_val key, val;
     int rv, counter = 0;
+    NDS_TIMER_START;
     
     ndsdb = nds_open(db, 0);
     if (!ndsdb) {
@@ -638,13 +622,16 @@ cleanup:
     }
     nds_close(ndsdb);
     
+    NDS_TIMER_END;
     return rv;
 }
 
 /* Clear all NDS databases */
 void nukeNDSFromOrbit(void) {
+    NDS_TIMER_START;
     unlink("data.mdb");
     unlink("lock.mdb");
+    NDS_TIMER_END;
 }
 
 static int preloadWalker(void *data, robj *key) {
@@ -686,6 +673,7 @@ static int keycacheWalker(void *data, robj *key) {
 }
 
 void notifyNDS(redisDb *db, sds key, int change_type) {
+    NDS_TIMER_START;
     if (!dictFind(db->dirty_keys, key)) {
         dictAdd(db->dirty_keys, sdsdup(key), NULL);
     }
@@ -704,6 +692,7 @@ void notifyNDS(redisDb *db, sds key, int change_type) {
         default:
             redisLog(REDIS_WARNING, "notifyNDS called with unknown change_type: %i", change_type);
     }
+    NDS_TIMER_END;
 }
 
 void loadNDSKeycache(void) {
@@ -717,6 +706,7 @@ void loadNDSKeycache(void) {
 
 
 int isDirtyKey(redisDb *db, sds key) {
+    NDS_TIMER_START;
     if (dictFind(db->dirty_keys, key)
         || dictFind(db->flushing_keys, key)
        ) {
@@ -724,25 +714,30 @@ int isDirtyKey(redisDb *db, sds key) {
     } else {
         return 0;
     }
+    NDS_TIMER_END;
 }
 
 unsigned long long dirtyKeyCount(void) {
     unsigned long long count = 0;
+    NDS_TIMER_START;
     
     for (int i = 0; i < server.dbnum; i++) {
         count += dictSize((server.db+i)->dirty_keys);
     }
     
+    NDS_TIMER_END;
     return count;
 }
 
 unsigned long long flushingKeyCount(void) {
     unsigned long long count = 0;
+    NDS_TIMER_START;
     
     for (int i = 0; i < server.dbnum; i++) {
         count += dictSize((server.db+i)->flushing_keys);
     }
     
+    NDS_TIMER_END;
     return count;
 }
     
@@ -848,6 +843,7 @@ int flushDirtyKeys(void) {
                 redisLog(REDIS_DEBUG, "Deleting key '%s' from NDS", keystr);
                 if (nds_del(ndsdb, keystr) == -1) {
                     redisLog(REDIS_WARNING, "nds_del returned error, flush failed");
+                    NDS_TIMER_END;
                     return REDIS_ERR;
                 }
             } else {
@@ -921,6 +917,8 @@ void postNDSFlushCleanup(void) {
 }
 
 void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
+    NDS_TIMER_START;
+    
     redisLog(REDIS_NOTICE, "NDS background save completed.  exitcode=%i, bysignal=%i", exitcode, bysignal);
 
     server.nds_snapshot_in_progress = 0;
@@ -934,7 +932,6 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
             server.nds_bg_requestor = NULL;
         }
     } else {
-        NDS_TIMER_START;
         server.stat_nds_flush_failure++;
         /* Merge the flushing keys back into the dirty keys so that they'll be
          * retried on the next flush, since we can't know for certain whether
@@ -949,6 +946,7 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
             di = dictGetSafeIterator(db->flushing_keys);
             if (!di) {
                 redisLog(REDIS_WARNING, "backgroundNDSFlushDoneHandler: dictGetSafeIterator failed!  This is terribad!");
+                NDS_TIMER_END;
                 return;
             }
             
@@ -967,7 +965,6 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
             }
             server.nds_bg_requestor = NULL;
         }
-        NDS_TIMER_END;
     }
         
     server.nds_child_pid = -1;
@@ -979,13 +976,16 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
         if (backgroundDirtyKeysFlush() == REDIS_ERR && server.nds_bg_requestor) {
             addReplyError(server.nds_bg_requestor, "Delayed NDS SNAPSHOT failed; consult logs for details");
             server.nds_bg_requestor = NULL;
+            NDS_TIMER_END;
             return;
         }
     }
+    NDS_TIMER_END;
 }
 
 void checkNDSChildComplete(void) {
     NDS_TIMER_START;
+    
     if (server.nds_child_pid != -1) {
         int statloc;
         pid_t pid;
@@ -1002,16 +1002,17 @@ void checkNDSChildComplete(void) {
 
             if (pid > 0) {
                 if (pid == server.nds_child_pid) {
+                    NDS_TIMER_END;
                     backgroundNDSFlushDoneHandler(exitcode,bysignal);
                 } else {
                     redisLog(REDIS_WARNING,
                         "Warning, detected child with unmatched pid: %ld",
                         (long)pid);
+                    NDS_TIMER_END;
                 }
             }
         }
     }
-    NDS_TIMER_END;
 }
                 
 void ndsFlushCommand(redisClient *c) {
