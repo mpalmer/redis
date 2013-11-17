@@ -42,61 +42,86 @@
 #include <sys/wait.h>
 #include <sys/statvfs.h>
 
-#define FREEZER_FILENAME_LEN 255
-
 /* Ripped wholesale from mdb.c */
 #define MDB_MAXKEYSIZE 511
 #define MDB_MAXDATASIZE 0xffffffffUL
 
-typedef struct {
-	MDB_txn *txn;
-	MDB_dbi dbi;
-	redisDb *rdb;
-	char db_name[FREEZER_FILENAME_LEN];
-	unsigned int txn_count;
-} NDSDB;
-
 /* Generate the name of the freezer we want, based on the database passed
  * in, and stuff the name into buf. */
 static void freezer_filename(redisDb *db, char *buf) {
-    snprintf(buf, FREEZER_FILENAME_LEN-1,
+    snprintf(buf, REDIS_FREEZER_FILENAME_LEN-1,
              "freezer_%i",
              db->id);
 }
 
 /* Close an NDS database. */
 static void nds_close(NDSDB *ndsdb) {
+    redisLog(REDIS_DEBUG, "nds_close(ndsdb=\"%s\"), ref=%i", ndsdb->db_name, server.ndsdb.refs);
+    
     if (!ndsdb) {
         return;
     }
 
-    if (ndsdb->txn) {
-        mdb_txn_commit(ndsdb->txn);
-    }
+    if (--(ndsdb->refs) == 0) {
+        /* Everything except the environment must go! */
+        if (ndsdb->txn) {
+            mdb_txn_commit(ndsdb->txn);
+            ndsdb->txn = NULL;
+        }
     
-    if (ndsdb->dbi >= 0) {
-        mdb_dbi_close(server.mdb_env, ndsdb->dbi);
+        if (ndsdb->dbi >= 0) {
+            mdb_dbi_close(ndsdb->env, ndsdb->dbi);
+            ndsdb->dbi = -1;
+        }
+        
+        ndsdb->rdb = NULL;
+        ndsdb->db_name[0] = '\0';
+        ndsdb->txn_count = 0;
     }
-    
-    zfree(ndsdb);
 }
 
-/* Open the freezer.  Pass in the redis DB to open the freezer for and
- * whether you want to open for read (writer == 0) or write (writer == 1). 
- * You'll get back an NDSDB * that can be handed around to other nds_*
- * functions, or NULL on failure.
+/* Open the freezer.  Pass in the redis DB you wish to open, and whether you
+ * want to open it for read (writer == 0) or write (writer == 1).  You'll
+ * get back an `NDSDB *` that can be handed around to other nds_* functions,
+ * or NULL on failure.
  */
 static NDSDB *nds_open(redisDb *db, int writer) {
-    NDSDB *ndsdb;
     int rv;
-    
-    /* Re-open the environment if it isn't open in the correct access mode */
-    if (server.mdb_env_writer != writer) {
-        mdb_env_close(server.mdb_env);
-        server.mdb_env = NULL;
+
+    redisLog(REDIS_DEBUG, "nds_open(db=%i, writer=%i), ref=%i", db->id, writer, server.ndsdb.refs);
+
+    /* If we're re-opening, we need to make sure we're being asked for the
+     * same thing */
+    if (server.ndsdb.refs > 0) {
+        if (server.ndsdb.writer != writer) {
+            redisLog(REDIS_WARNING,
+                     "Can't reopen active NDS environment for %s",
+                     writer ? "writing" : "reading");
+            return NULL;
+        }
+        if (server.ndsdb.rdb->id != db->id) {
+            redisLog(REDIS_WARNING,
+                     "Can't open DB %i, DB %i is already open",
+                     db->id, server.ndsdb.rdb->id);
+            return NULL;
+        }
+        
+        /* OK, we can short-circuit things from here */
+        server.ndsdb.refs++;
+        return &server.ndsdb;
     }
+
+    /* Re-open everything if we aren't open in the correct access mode.
+     * We can be confident that we're not already in a transaction,
+     * because of the previous refcount check */
+    if (server.ndsdb.writer != writer) {
+        mdb_env_close(server.ndsdb.env);
+        server.ndsdb.env = NULL;
+    }
+
+    /* Now we can commence the creation of the NDSDB */
     
-    if (!server.mdb_env) {
+    if (!server.ndsdb.env) {
         struct stat statbuf;
         struct statvfs statvfsbuf;
         unsigned long long mapsize = 0;
@@ -144,34 +169,34 @@ static NDSDB *nds_open(redisDb *db, int writer) {
         
         redisLog(REDIS_DEBUG, "Setting mapsize to %llu", mapsize);
                     
-        if ((rv = mdb_env_create(&server.mdb_env))) {
+        if ((rv = mdb_env_create(&server.ndsdb.env))) {
             redisLog(REDIS_WARNING, "mdb_env_create() failed: %s", mdb_strerror(rv));
-            server.mdb_env = NULL;
+            server.ndsdb.env = NULL;
             goto mdb_env_cleanup;
         }
         
-        if ((rv = mdb_env_set_mapsize(server.mdb_env, mapsize))) {
+        if ((rv = mdb_env_set_mapsize(server.ndsdb.env, mapsize))) {
             redisLog(REDIS_WARNING, "mdb_env_set_mapsize() failed: %s", mdb_strerror(rv));
         }
         
-        if ((rv = mdb_env_set_maxdbs(server.mdb_env, server.dbnum))) {
+        if ((rv = mdb_env_set_maxdbs(server.ndsdb.env, server.dbnum))) {
             redisLog(REDIS_WARNING, "mdb_env_set_maxdbs() failed: %s", mdb_strerror(rv));
             goto mdb_env_cleanup;
         }
         
-        if ((rv = mdb_env_open(server.mdb_env, ".", writer ? 0 : MDB_RDONLY, 0644))) {
+        if ((rv = mdb_env_open(server.ndsdb.env, ".", writer ? 0 : MDB_RDONLY, 0644))) {
             redisLog(REDIS_WARNING, "mdb_env_open() failed: %s", mdb_strerror(rv));
             goto mdb_env_cleanup;
         }
 
-        server.mdb_env_writer = writer;
+        server.ndsdb.writer = writer;
         
         goto success;
         
 mdb_env_cleanup:
-        if (server.mdb_env) {
-            mdb_env_close(server.mdb_env);
-            server.mdb_env = NULL;
+        if (server.ndsdb.env) {
+            mdb_env_close(server.ndsdb.env);
+            server.ndsdb.env = NULL;
         }
         return NULL;
 
@@ -179,23 +204,23 @@ success:
         redisLog(REDIS_DEBUG, "mdb_env initialised");
     }
     
-    ndsdb = zmalloc(sizeof(NDSDB));
-    if (!ndsdb) {
-        redisLog(REDIS_WARNING, "Failed to allocate an NDSDB: %s", strerror(errno));
-        return NULL;
-    }
-    ndsdb->txn = NULL;
-    ndsdb->rdb = db;
-    ndsdb->txn_count = 0;
+    /* We'll only get here if we're not already open (if the refcount was
+     * already > 0, we'd have returned waaaay back at the beginning), so we
+     * can now behave like we're starting in a whole new world.  */
+    server.ndsdb.rdb = db;
+    server.ndsdb.txn_count = 0;
+    server.ndsdb.dbi = -1;
+    server.ndsdb.refs = 1;
     
-    freezer_filename(db, ndsdb->db_name);
+    freezer_filename(db, server.ndsdb.db_name);
     
-    if ((rv = mdb_txn_begin(server.mdb_env, NULL, writer ? 0 : MDB_RDONLY, &(ndsdb->txn)))) {
+    if ((rv = mdb_txn_begin(server.ndsdb.env, NULL, writer ? 0 : MDB_RDONLY, &(server.ndsdb.txn)))) {
         redisLog(REDIS_WARNING, "Failed to begin a txn: %s", mdb_strerror(rv));
+        server.ndsdb.txn = NULL;
         goto err_cleanup;
     }
     
-    if ((rv = mdb_dbi_open(ndsdb->txn, ndsdb->db_name, writer ? MDB_CREATE : 0, &(ndsdb->dbi)))) {
+    if ((rv = mdb_dbi_open(server.ndsdb.txn, server.ndsdb.db_name, writer ? MDB_CREATE : 0, &(server.ndsdb.dbi)))) {
         if (writer || (rv != MDB_NOTFOUND && rv != EPERM)) {
             redisLog(REDIS_WARNING, "Failed to open freezer DBi for DB %i: %s", db->id, mdb_strerror(rv));
             goto err_cleanup;
@@ -206,11 +231,10 @@ success:
     goto done;
 
 err_cleanup:
-    nds_close(ndsdb);
-    ndsdb = NULL;
+    nds_close(&server.ndsdb);
 
 done:
-    return ndsdb;    
+    return &server.ndsdb;    
 }
 
 /* Check whether a key exists in the NDS.  Give me a DB and a key, and
@@ -336,8 +360,8 @@ static int nds_set(NDSDB *db, sds key, sds val) {
             return REDIS_ERR;
         } else {
             db->txn_count = 0;
-            mdb_dbi_close(server.mdb_env, db->dbi);
-            mdb_txn_begin(server.mdb_env, NULL, 0, &(db->txn));
+            mdb_dbi_close(db->env, db->dbi);
+            mdb_txn_begin(db->env, NULL, 0, &(db->txn));
             mdb_dbi_open(db->txn, db->db_name, 0, &(db->dbi));
         }
     }
@@ -376,8 +400,8 @@ static int nds_del(NDSDB *db, sds key) {
 
 /* Do the necessary bits and pieces required before a fork */
 void preforkNDS() {
-    mdb_env_close(server.mdb_env);
-    server.mdb_env = NULL;
+    mdb_env_close(server.ndsdb.env);
+    server.ndsdb.env = NULL;
 }
 
 robj *getNDS(redisDb *db, robj *key) {
@@ -772,11 +796,11 @@ int flushDirtyKeys() {
          * server.mdb_env won't have been initialised since it was closed in
          * backgroundDirtyKeysFlush() before we forked.  Hence, we *may*
          * need to trigger a quick open to initialise server.mdb_env.  */
-        if (!server.mdb_env) {
+        if (!server.ndsdb.env) {
             nds_close(nds_open(server.db, 0));
         }
         
-        if ((rv = mdb_env_copy(server.mdb_env, "./snapshot"))) {
+        if ((rv = mdb_env_copy(server.ndsdb.env, "./snapshot"))) {
             redisLog(REDIS_WARNING, "Snapshot failed: %s", mdb_strerror(rv));
         } else {
             redisLog(REDIS_NOTICE, "Snapshot completed successfully");
