@@ -367,6 +367,10 @@ void loadServerConfigFromString(char *config) {
             if ((server.nds_preload = yesnotoi(argv[1])) == -1) {
                 err = "argument must be 'yes' or 'no'"; goto loaderr;
             }
+        } else if (!strcasecmp(argv[0],"nds-keycache") && argc == 2) {
+            if ((server.nds_keycache = yesnotoi(argv[1])) == -1) {
+                err = "argument must be 'yes' or 'no'"; goto loaderr;
+            }
         } else if (!strcasecmp(argv[0],"aof-rewrite-incremental-fsync") &&
                    argc == 2)
         {
@@ -1008,6 +1012,7 @@ void configGetCommand(redisClient *c) {
             server.repl_disable_tcp_nodelay);
     config_get_bool_field("nds", server.nds);
     config_get_bool_field("nds-preload", server.nds_preload);
+    config_get_bool_field("nds-keycache", server.nds_keycache);
     config_get_bool_field("aof-rewrite-incremental-fsync",
             server.aof_rewrite_incremental_fsync);
 

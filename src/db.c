@@ -41,9 +41,9 @@ void slotToKeyFlush(void);
  * C-level DB API
  *----------------------------------------------------------------------------*/
 
-/* Ensure that the specified key is in memory, without actually  -- only
- * useful for NDS.  Returns REDIS_OK if NDS is off, or if the key was
- * loaded, and REDIS_ERR if the key wasn't found in NDS.  */
+/* Ensure that the specified key is in memory, if it exists.  Returns
+ * REDIS_OK if NDS is off, or if the key was loaded, and REDIS_ERR if the
+ * key wasn't found in NDS.  */
 int loadKey(redisDb *db, robj *key) {
     if (!server.nds) {
         return REDIS_OK;
@@ -162,7 +162,7 @@ void dbAdd(redisDb *db, robj *key, robj *val) {
 
     redisAssertWithInfo(NULL,key,retval == REDIS_OK);
     if (server.nds) {
-        touchDirtyKey(db, key->ptr);
+        notifyNDS(db, key->ptr, NDS_KEY_ADD);
     }
     if (server.cluster_enabled) slotToKeyAdd(key);
  }
@@ -181,7 +181,7 @@ void dbOverwrite(redisDb *db, robj *key, robj *val) {
     
     redisAssertWithInfo(NULL,key,de != NULL);
     if (server.nds) {
-        touchDirtyKey(db, key->ptr);
+        notifyNDS(db, key->ptr, NDS_KEY_CHANGE);
     }
     dictReplace(db->dict, key->ptr, val);
 }
@@ -303,7 +303,7 @@ int selectDb(redisClient *c, int id) {
 
 void signalModifiedKey(redisDb *db, robj *key) {
     if (server.nds) {
-        touchDirtyKey(db, key->ptr);
+        notifyNDS(db, key->ptr, NDS_KEY_CHANGE);
     }
     touchWatchedKey(db,key);
 }
@@ -707,9 +707,7 @@ int expireIfNeeded(redisDb *db, robj *key) {
 
     /* Delete the key */
     if (server.nds) {
-        /* By saying "this key is dirty", it'll be included in the next
-         * flush, detected as not existing, and thus get deleted from NDS */
-        touchDirtyKey(db, key->ptr);
+        notifyNDS(db, key->ptr, NDS_KEY_EXPIRED);
     }
         
     server.stat_expiredkeys++;
@@ -856,7 +854,7 @@ void persistCommand(redisClient *c) {
         if (removeExpire(c->db,c->argv[1])) {
             addReply(c,shared.cone);
             if (server.nds) {
-                touchDirtyKey(c->db, c->argv[1]->ptr);
+                notifyNDS(c->db, c->argv[1]->ptr, NDS_KEY_CHANGE);
             }
             server.dirty++;
         } else {

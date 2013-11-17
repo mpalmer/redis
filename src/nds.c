@@ -243,6 +243,36 @@ done:
     return &server.ndsdb;    
 }
 
+/* Return 1 if it is *known* to be pointless to go to disk, because the key
+ * isn't there.  This requires the keycache to be enabled, naturally. */
+static int not_in_keycache(redisDb *db, sds key) {
+    if (!server.nds_keycache) {
+        return 0;
+    }
+    
+    return (dictFind(db->nds_keys, key) ? 0 : 1);
+}
+
+static void cache_key(redisDb *db, sds key) {
+    if (!server.nds_keycache) {
+        return;
+    }
+    
+    if (not_in_keycache(db, key)) {
+        dictAdd(db->nds_keys, key, NULL);
+    }
+}
+
+static void uncache_key(redisDb *db, sds key) {
+    if (!server.nds_keycache) {
+        return;
+    }
+    
+    if (!not_in_keycache(db, key)) {
+        dictDelete(db->nds_keys, key);
+    }
+}
+
 /* Check whether a key exists in the NDS.  Give me a DB and a key, and
  * I'll give you a 1/0 to say whether it exists or not.  You'll get -1
  * if there was an error.
@@ -251,6 +281,10 @@ static int nds_exists(NDSDB *db, sds key) {
     MDB_val k, v;
     int rv;
     NDS_TIMER_START;
+    
+    if (not_in_keycache(db->rdb, key)) {
+        return 0;
+    }
     
     k.mv_size = sdslen(key);
     k.mv_data = key;
@@ -294,6 +328,10 @@ static sds nds_get(NDSDB *db, sds key) {
     MDB_val k, v;
     int rv;
     NDS_TIMER_START;
+
+    if (not_in_keycache(db->rdb, key)) {
+        return NULL;
+    }
     
     k.mv_size = sdslen(key);
     k.mv_data = key;
@@ -421,7 +459,7 @@ static int nds_del(NDSDB *db, sds key) {
 }
 
 /* Do the necessary bits and pieces required before a fork */
-void preforkNDS() {
+void preforkNDS(void) {
     mdb_env_close(server.ndsdb.env);
     server.ndsdb.env = NULL;
 }
@@ -483,7 +521,7 @@ nds_cleanup:
 int existsNDS(redisDb *db, robj *key) {
     NDSDB *ndsdb = nds_open(db, 0);
     int rv;
-    
+
     redisLog(REDIS_DEBUG, "Checking for existence of %s in NDS", (char *)key->ptr);
     
     if (!ndsdb) {
@@ -604,7 +642,7 @@ cleanup:
 }
 
 /* Clear all NDS databases */
-void nukeNDSFromOrbit() {
+void nukeNDSFromOrbit(void) {
     unlink("data.mdb");
     unlink("lock.mdb");
 }
@@ -623,7 +661,7 @@ static int preloadWalker(void *data, robj *key) {
 }
 
 /* Read all keys from the NDS datastores into memory. */
-void preloadNDS() {
+void preloadNDS(void) {
     if (server.nds_preload_in_progress || server.nds_preload_complete) {
         return;
     }
@@ -637,15 +675,46 @@ void preloadNDS() {
     server.nds_preload_complete = 1;
 }
 
-/* Add the key to the dirty keys list if it isn't there already */
-void touchDirtyKey(redisDb *db, sds sdskey) {
-    dictEntry *de = dictFind(db->dirty_keys, sdskey);
+static int keycacheWalker(void *data, robj *key) {
+    redisDb *db = (redisDb *)data;
+    sds copy = sdsdup(key->ptr);
     
-    if (!de) {
-        sds copy = sdsdup(sdskey);
-        dictAdd(db->dirty_keys, copy, NULL);
+    int retval = dictAdd(db->nds_keys, copy, NULL);
+    redisAssertWithInfo(NULL, key, retval == REDIS_OK);
+    
+    return REDIS_OK;
+}
+
+void notifyNDS(redisDb *db, sds key, int change_type) {
+    if (!dictFind(db->dirty_keys, key)) {
+        dictAdd(db->dirty_keys, sdsdup(key), NULL);
+    }
+
+    switch (change_type) {
+        case NDS_KEY_ADD:
+            cache_key(db, key);
+            break;
+        case NDS_KEY_DEL:
+        case NDS_KEY_EXPIRED:
+            uncache_key(db, key);
+            break;
+        case NDS_KEY_CHANGE:
+            /* Nothing special to do here; just avoiding a log message */
+            break;
+        default:
+            redisLog(REDIS_WARNING, "notifyNDS called with unknown change_type: %i", change_type);
     }
 }
+
+void loadNDSKeycache(void) {
+    redisLog(REDIS_NOTICE, "Loading all keys from NDS");
+    
+    for (int i = 0; i < server.dbnum; i++) {
+        walkNDS(server.db+i, keycacheWalker, server.db+i, 0);
+    }
+    redisLog(REDIS_NOTICE, "Key cache loaded");
+}
+
 
 int isDirtyKey(redisDb *db, sds key) {
     if (dictFind(db->dirty_keys, key)
@@ -657,7 +726,7 @@ int isDirtyKey(redisDb *db, sds key) {
     }
 }
 
-unsigned long long dirtyKeyCount() {
+unsigned long long dirtyKeyCount(void) {
     unsigned long long count = 0;
     
     for (int i = 0; i < server.dbnum; i++) {
@@ -667,7 +736,7 @@ unsigned long long dirtyKeyCount() {
     return count;
 }
 
-unsigned long long flushingKeyCount() {
+unsigned long long flushingKeyCount(void) {
     unsigned long long count = 0;
     
     for (int i = 0; i < server.dbnum; i++) {
@@ -678,7 +747,7 @@ unsigned long long flushingKeyCount() {
 }
     
 /* Fork and flush all the dirty keys out to disk. */
-int backgroundDirtyKeysFlush() {
+int backgroundDirtyKeysFlush(void) {
     pid_t childpid;
     NDS_TIMER_START;
 
@@ -743,7 +812,7 @@ int backgroundDirtyKeysFlush() {
     return REDIS_ERR;
 }
 
-int flushDirtyKeys() {
+int flushDirtyKeys(void) {
     NDS_TIMER_START;
     
     redisLog(REDIS_DEBUG, "Flushing dirty keys");
@@ -844,7 +913,7 @@ int flushDirtyKeys() {
     return REDIS_OK;
 }
 
-void postNDSFlushCleanup() {
+void postNDSFlushCleanup(void) {
     NDS_TIMER_START;
     for (int i = 0; i < server.dbnum; i++) {
         redisDb *db = server.db+i;
@@ -919,7 +988,7 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
     }
 }
 
-void checkNDSChildComplete() {
+void checkNDSChildComplete(void) {
     NDS_TIMER_START;
     if (server.nds_child_pid != -1) {
         int statloc;

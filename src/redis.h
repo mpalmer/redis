@@ -405,6 +405,7 @@ typedef struct redisDb {
     dict *watched_keys;         /* WATCHED keys for MULTI/EXEC CAS */
     dict *dirty_keys;           /* Keys that have been changed but not yet flushed */
     dict *flushing_keys;        /* Keys being flushed by a child at the moment */
+    dict *nds_keys;             /* All the keys stored in NDS */
     int id;
     long long avg_ttl;          /* Average TTL, just for stats */
 } redisDb;
@@ -860,6 +861,7 @@ struct redisServer {
     int nds_preload;                /* Should we load all keys out of NDS on startup? */
     int nds_preload_in_progress;    /* Are we currently preloading? */
     int nds_preload_complete;       /* Have we already preloaded? */
+    int nds_keycache;               /* Are we using the keycache optimisation? */
     pid_t nds_child_pid;            /* PID of child flushing to NDS */
     int nds_snapshot_in_progress;   /* Whether we are currently doing a snapshot dump */
     int nds_snapshot_pending;       /* Whether we're waiting on another NDS dump to
