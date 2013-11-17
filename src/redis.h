@@ -310,6 +310,8 @@
 #define redisAssert(_e) ((_e)?(void)0 : (_redisAssert(#_e,__FILE__,__LINE__),_exit(1)))
 #define redisPanic(_e) _redisPanic(#_e,__FILE__,__LINE__),_exit(1)
 
+#define REDIS_FREEZER_FILENAME_LEN 255
+
 /*-----------------------------------------------------------------------------
  * Data types
  *----------------------------------------------------------------------------*/
@@ -502,6 +504,19 @@ typedef struct redisOpArray {
     int numops;
 } redisOpArray;
 
+typedef struct NDSDB {
+	MDB_env *env;
+	MDB_txn *txn;
+	MDB_dbi dbi;
+	redisDb *rdb;
+	unsigned int refs;
+	char db_name[REDIS_FREEZER_FILENAME_LEN];
+	unsigned int txn_count;
+	int writer;
+} NDSDB;
+
+
+
 /*-----------------------------------------------------------------------------
  * Global server state
  *----------------------------------------------------------------------------*/
@@ -630,8 +645,7 @@ struct redisServer {
                                                 * fulfill a key lookup */
     unsigned long long stat_nds_flush_success;  /* How many successful flushes we've done */
     unsigned long long stat_nds_flush_failure;  /* How many flushes have failed */
-    MDB_env *mdb_env;               /* Global pointer the LMDB 'environment' */
-    int mdb_env_writer;             /* 0/1 for whether mdb_env is open for writing */
+    NDSDB ndsdb;                    /* Global pointer to the open NDSDB */
     /* Propagation of commands in AOF / replication */
     redisOpArray also_propagate;    /* Additional command to propagate. */
     /* Logging */

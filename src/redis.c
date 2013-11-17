@@ -1490,7 +1490,7 @@ void initServer() {
     server.nds_snapshot_pending = 0;
     server.nds_snapshot_in_progress = 0;
     server.nds_bg_requestor = NULL;
-    server.mdb_env = NULL;
+    memset(&server.ndsdb, 0,sizeof(server.ndsdb));
     aofRewriteBufferReset();
     server.aof_buf = sdsempty();
     server.lastsave = time(NULL); /* At startup we consider the DB saved. */
