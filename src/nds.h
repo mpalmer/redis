@@ -31,6 +31,11 @@
 #ifndef NDS_H
 #define NDS_H
 
+#define NDS_KEY_ADD     1
+#define NDS_KEY_DEL     2
+#define NDS_KEY_CHANGE  3
+#define NDS_KEY_EXPIRED 4
+
 #include <stdlib.h>
 
 #include "redis.h"
@@ -45,9 +50,11 @@ int    walkNDS(redisDb *db,
                void *data,
                int interrupt_rate);
 void   preloadNDS(void);
+void   loadNDSKeycache(void);
 void   nukeNDSFromOrbit(void);
 
-void   touchDirtyKey(redisDb *db, sds sdskey);
+void   notifyNDS(redisDb *db, sds key, int change_type);
+
 int    isDirtyKey(redisDb *db, sds sdskey);
 
 unsigned long long dirtyKeyCount(void);

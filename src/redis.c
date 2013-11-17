@@ -1287,6 +1287,7 @@ void initServerConfig() {
     server.nds = 0;
     server.nds_watermark = 0;
     server.nds_preload = 0;
+    server.nds_keycache = 0;
     server.aof_rewrite_incremental_fsync = 1;
     server.pidfile = zstrdup("/var/run/redis.pid");
     server.rdb_filename = zstrdup("dump.rdb");
@@ -1474,6 +1475,7 @@ void initServer() {
         server.db[j].watched_keys = dictCreate(&keylistDictType,NULL);
         server.db[j].dirty_keys = dictCreate(&dbDictType, NULL);
         server.db[j].flushing_keys = dictCreate(&dbDictType, NULL);
+        server.db[j].nds_keys = dictCreate(&dbDictType, NULL);
         server.db[j].id = j;
         server.db[j].avg_ttl = 0;
     }
@@ -2432,6 +2434,7 @@ sds genRedisInfoString(char *section) {
             "# NDS\r\n"
             "nds_enabled:%i\r\n"
             "nds_preload:%i\r\n"
+            "nds_keycache:%i\r\n"
             "nds_cache_hits:%llu\r\n"
             "nds_cache_misses:%llu\r\n"
             "nds_cache_hit_rate:%.02f%%\r\n"
@@ -2447,6 +2450,7 @@ sds genRedisInfoString(char *section) {
             "nds_child_pid:%i\r\n",
             server.nds,
             server.nds_preload,
+            server.nds_keycache,
             server.stat_nds_cache_hits,
             server.stat_nds_cache_misses,
             hit_rate,
@@ -2892,6 +2896,10 @@ void loadDataFromDisk(void) {
         if (server.nds_preload) {
             redisLog(REDIS_NOTICE, "Preloading all NDS data");
             preloadNDS();
+        }
+        if (server.nds_keycache) {
+            redisLog(REDIS_NOTICE, "Caching all NDS keys in memory");
+            loadNDSKeycache();
         }
     } else {
         long long start = ustime();
