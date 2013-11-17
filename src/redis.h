@@ -872,6 +872,7 @@ struct redisServer {
                                                 * fulfill a key lookup */
     unsigned long long stat_nds_flush_success;  /* How many successful flushes we've done */
     unsigned long long stat_nds_flush_failure;  /* How many flushes have failed */
+    unsigned long long stat_nds_usec;  /* How much time has been spent inside NDS */
     NDSDB ndsdb;                    /* Global pointer to the open NDSDB */
     /* Propagation of commands in AOF / replication */
     redisOpArray also_propagate;    /* Additional command to propagate. */
