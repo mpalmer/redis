@@ -1502,6 +1502,7 @@ void initServer() {
     server.stat_nds_cache_misses = 0;
     server.stat_nds_flush_success = 0;
     server.stat_nds_flush_failure = 0;
+    server.stat_nds_usec = 0;
     server.stat_numcommands = 0;
     server.stat_numconnections = 0;
     server.stat_expiredkeys = 0;
@@ -2434,6 +2435,7 @@ sds genRedisInfoString(char *section) {
             "nds_cache_hits:%llu\r\n"
             "nds_cache_misses:%llu\r\n"
             "nds_cache_hit_rate:%.02f%%\r\n"
+            "nds_usec:%llu\r\n"
             "nds_dirty_keys:%llu\r\n"
             "nds_flushing_keys:%llu\r\n"
             "nds_flush_success:%llu\r\n"
@@ -2448,6 +2450,7 @@ sds genRedisInfoString(char *section) {
             server.stat_nds_cache_hits,
             server.stat_nds_cache_misses,
             hit_rate,
+            server.stat_nds_usec,
             dirtyKeyCount(),
             flushingKeyCount(),
             server.stat_nds_flush_success,

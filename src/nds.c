@@ -46,6 +46,10 @@
 #define MDB_MAXKEYSIZE 511
 #define MDB_MAXDATASIZE 0xffffffffUL
 
+/* Bugger this manual typing thing */
+#define NDS_TIMER_START unsigned long long start = ustime();
+#define NDS_TIMER_END server.stat_nds_usec += ustime()-start;
+
 /* Generate the name of the freezer we want, based on the database passed
  * in, and stuff the name into buf. */
 static void freezer_filename(redisDb *db, char *buf) {
@@ -87,6 +91,7 @@ static void nds_close(NDSDB *ndsdb) {
  */
 static NDSDB *nds_open(redisDb *db, int writer) {
     int rv;
+    NDS_TIMER_START;
 
     redisLog(REDIS_DEBUG, "nds_open(db=%i, writer=%i), ref=%i", db->id, writer, server.ndsdb.refs);
 
@@ -234,6 +239,7 @@ err_cleanup:
     nds_close(&server.ndsdb);
 
 done:
+    NDS_TIMER_END;
     return &server.ndsdb;    
 }
 
@@ -244,6 +250,7 @@ done:
 static int nds_exists(NDSDB *db, sds key) {
     MDB_val k, v;
     int rv;
+    NDS_TIMER_START;
     
     k.mv_size = sdslen(key);
     k.mv_data = key;
@@ -253,12 +260,14 @@ static int nds_exists(NDSDB *db, sds key) {
          * memory, so it clearly mustn't exist.  */
         redisLog(REDIS_DEBUG,
                  "nds_exists(db=%i, key=%s) => NOT_IN_MEMORY",
-                 db->rdb->id, key); 
+                 db->rdb->id, key);
+        NDS_TIMER_END;
         return 0;
     }
     
     if (sdslen(key) > MDB_MAXKEYSIZE) {
         redisLog(REDIS_WARNING, "Passed excessively long key to nds_exists");
+        NDS_TIMER_END;
         return -1;
     }
     
@@ -274,6 +283,7 @@ static int nds_exists(NDSDB *db, sds key) {
     }
 
     redisLog(REDIS_DEBUG, "nds_exists(db=%i, key=%s) => %i", db->rdb->id, key, rv);
+    NDS_TIMER_END;
     return rv;
 }
 
@@ -283,6 +293,7 @@ static int nds_exists(NDSDB *db, sds key) {
 static sds nds_get(NDSDB *db, sds key) {
     MDB_val k, v;
     int rv;
+    NDS_TIMER_START;
     
     k.mv_size = sdslen(key);
     k.mv_data = key;
@@ -296,11 +307,13 @@ static sds nds_get(NDSDB *db, sds key) {
         redisLog(REDIS_DEBUG,
                  "nds_get(db=%i, key=%s) => NOT_IN_MEMORY",
                  db->rdb->id, key); 
+        NDS_TIMER_END;
         return NULL;
     }
     
     if (sdslen(key) > MDB_MAXKEYSIZE) {
         redisLog(REDIS_WARNING, "Passed excessively long key to nds_get");
+        NDS_TIMER_END;
         return NULL;
     }
 
@@ -313,11 +326,13 @@ static sds nds_get(NDSDB *db, sds key) {
         } else {
             redisLog(REDIS_WARNING, "mdb_get(%s) failed: %s", key, mdb_strerror(rv));
         }
+        NDS_TIMER_END;
         return NULL;
     }
     
     redisLog(REDIS_DEBUG, "nds_get(db=>%i, key=%s) => %i byte value",
              db->rdb->id, key, v.mv_size);
+    NDS_TIMER_END;
     return sdsnewlen(v.mv_data, v.mv_size);
 }
 
@@ -327,6 +342,7 @@ static sds nds_get(NDSDB *db, sds key) {
 static int nds_set(NDSDB *db, sds key, sds val) {
     int rv = REDIS_OK;
     MDB_val k, v;
+    NDS_TIMER_START;
     
     k.mv_size = sdslen(key);
     k.mv_data = key;
@@ -336,11 +352,13 @@ static int nds_set(NDSDB *db, sds key, sds val) {
     
     if (sdslen(key) > MDB_MAXKEYSIZE) {
         redisLog(REDIS_WARNING, "Passed excessively long key to nds_set");
+        NDS_TIMER_END;
         return REDIS_ERR;
     }
     
     if (sdslen(val) > MDB_MAXDATASIZE) {
         redisLog(REDIS_WARNING, "Key %s has an excessively long value", key);
+        NDS_TIMER_END;
         return REDIS_ERR;
     }
     
@@ -349,6 +367,7 @@ static int nds_set(NDSDB *db, sds key, sds val) {
     
     if (rv) {
         redisLog(REDIS_WARNING, "mdb_put(%s) failed: %s", key, mdb_strerror(rv));
+        NDS_TIMER_END;
         return REDIS_ERR;
     }
     
@@ -368,6 +387,7 @@ static int nds_set(NDSDB *db, sds key, sds val) {
     
     redisLog(REDIS_DEBUG, "nds_set(db=%i, key=%s) => REDIS_OK",
              db->rdb->id, key);
+    NDS_TIMER_END;
     return REDIS_OK;
 }
 
@@ -377,6 +397,7 @@ static int nds_set(NDSDB *db, sds key, sds val) {
 static int nds_del(NDSDB *db, sds key) {
     MDB_val k;
     int rv;
+    NDS_TIMER_START;
     
     k.mv_size = sdslen(key);
     k.mv_data = key;
@@ -395,6 +416,7 @@ static int nds_del(NDSDB *db, sds key) {
     redisLog(REDIS_DEBUG, "nds_del(db=%i, key=%s) => %i",
              db->rdb->id, key, rv);
 
+    NDS_TIMER_END;
     return rv;
 }
 
@@ -422,6 +444,7 @@ robj *getNDS(redisDb *db, robj *key) {
     nds_close(ndsdb);
     
     if (val) {
+        NDS_TIMER_START;
         redisLog(REDIS_DEBUG, "Key %s was found in NDS", (char *)key->ptr);
 
         /* We got one!  Thaw and return */
@@ -431,6 +454,7 @@ robj *getNDS(redisDb *db, robj *key) {
             ((obj  = rdbLoadObject(type,&payload)) == NULL))
         {
             redisLog(REDIS_WARNING, "Bad data format for key %s; ignoring", (char *)key->ptr);
+            NDS_TIMER_END;
             goto nds_cleanup;
         }
         
@@ -444,6 +468,7 @@ robj *getNDS(redisDb *db, robj *key) {
                 setExpire(db, key, expire);
             }
         }
+        NDS_TIMER_END;
     }
 
 nds_cleanup:
@@ -473,6 +498,7 @@ int existsNDS(redisDb *db, robj *key) {
 
 /* Remove all keys from an NDS database. */
 int emptyNDS(redisDb *db) {
+    NDS_TIMER_START;
     NDSDB *ndsdb = nds_open(db, 1);
     int rv;
 
@@ -487,10 +513,12 @@ int emptyNDS(redisDb *db) {
 
     redisLog(REDIS_DEBUG, "emptyNDS(db=%i) => REDIS_OK", db->id);
     nds_close(ndsdb);
+    NDS_TIMER_END;
     return REDIS_OK;
 }
 
 size_t keyCountNDS(redisDb *db) {
+    NDS_TIMER_START;
     NDSDB *ndsdb = nds_open(db, 0);
     int rv;
     MDB_stat stats;
@@ -509,6 +537,7 @@ size_t keyCountNDS(redisDb *db) {
     
     redisLog(REDIS_DEBUG, "keyCountNDS(db=%i) => %llu",
              db->id, stats.ms_entries);
+    NDS_TIMER_END;
     return stats.ms_entries;
 }
 
@@ -651,6 +680,7 @@ unsigned long long flushingKeyCount() {
 /* Fork and flush all the dirty keys out to disk. */
 int backgroundDirtyKeysFlush() {
     pid_t childpid;
+    NDS_TIMER_START;
 
     if (server.nds_child_pid != -1) return REDIS_ERR;
     
@@ -701,6 +731,7 @@ int backgroundDirtyKeysFlush() {
             db->flushing_keys = db->dirty_keys;
             db->dirty_keys = dTmp;
         }
+        NDS_TIMER_END;
         return REDIS_OK;
     }
     
@@ -709,6 +740,8 @@ int backgroundDirtyKeysFlush() {
 }
 
 int flushDirtyKeys() {
+    NDS_TIMER_START;
+    
     redisLog(REDIS_DEBUG, "Flushing dirty keys");
     for (int j = 0; j < server.dbnum; j++) {
         redisDb *db = server.db+j;
@@ -802,17 +835,20 @@ int flushDirtyKeys() {
             redisLog(REDIS_NOTICE, "Snapshot completed successfully");
         }
     }
-                
+    
+    NDS_TIMER_END;
     return REDIS_OK;
 }
 
 void postNDSFlushCleanup() {
+    NDS_TIMER_START;
     for (int i = 0; i < server.dbnum; i++) {
         redisDb *db = server.db+i;
         dictEmpty(db->flushing_keys);
     }
     server.lastsave = time(NULL);
     server.stat_nds_flush_success++;
+    NDS_TIMER_END;
 }
 
 void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
@@ -829,6 +865,7 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
             server.nds_bg_requestor = NULL;
         }
     } else {
+        NDS_TIMER_START;
         server.stat_nds_flush_failure++;
         /* Merge the flushing keys back into the dirty keys so that they'll be
          * retried on the next flush, since we can't know for certain whether
@@ -861,6 +898,7 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
             }
             server.nds_bg_requestor = NULL;
         }
+        NDS_TIMER_END;
     }
         
     server.nds_child_pid = -1;
@@ -878,6 +916,7 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
 }
 
 void checkNDSChildComplete() {
+    NDS_TIMER_START;
     if (server.nds_child_pid != -1) {
         int statloc;
         pid_t pid;
@@ -903,6 +942,7 @@ void checkNDSChildComplete() {
             }
         }
     }
+    NDS_TIMER_END;
 }
                 
 void ndsFlushCommand(redisClient *c) {
@@ -986,6 +1026,7 @@ void ndsCommand(redisClient *c) {
         redisLog(REDIS_NOTICE, "NDS CLEARSTATS requested");
         server.stat_nds_cache_hits = 0;
         server.stat_nds_cache_misses = 0;
+        server.stat_nds_usec = 0;
     } else if (!strcasecmp(c->argv[1]->ptr,"preload")) {
         if (c->argc != 2) goto badarity;
         redisLog(REDIS_NOTICE, "NDS PRELOAD requested");
