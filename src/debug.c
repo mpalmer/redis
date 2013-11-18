@@ -284,7 +284,10 @@ void debugCommand(redisClient *c) {
             addReply(c, shared.invalidkeyerr);
             return;
         }
-    
+
+        /* Perhaps we need to go to disk? */
+        loadKey(c->db, c->argv[2]);
+
         if ((de = dictFind(c->db->dict,c->argv[2]->ptr)) == NULL) {
             addReply(c,shared.nokeyerr);
             return;
