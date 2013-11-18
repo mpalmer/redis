@@ -428,7 +428,7 @@ static int nds_del(NDSDB *db, sds key) {
     if (rv == MDB_NOTFOUND) {
         rv = 0;
     } else if (rv) {
-        redisLog(REDIS_WARNING, "nds_del(%s) failed: %s", key, mdb_strerror(rv));
+        redisLog(REDIS_WARNING, "nds_del('%s') failed: %s", key, mdb_strerror(rv));
         rv = -1;
     } else {
         rv = 1;
