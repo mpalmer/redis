@@ -1,3 +1,15 @@
+redis (2:2.6.16-0anchor7) squeeze wheezy; urgency=low
+
+  * New MDB release.  Hopefully it'll help with some of the corruption
+    issues we've seen.
+  * Handle errors from mdb_cursor_open better.
+  * Reject invalid key names at command time, rather than storage time.
+  * Add an `nds_usec` counter, for better performance monitoring.
+  * A new "keycache" mode, which may help with performance in certain
+    situations, at the expense of some additional memory usage.
+
+ -- Matt Palmer <mpalmer@debian.org>  Fri, 22 Nov 2013 11:24:51 +1100
+
 redis (2:2.6.16-0anchor6) squeeze wheezy; urgency=low
 
   * Fix problem where nds-watermark could be negative.
