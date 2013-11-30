@@ -69,7 +69,6 @@ and `1 0` is more-or-less "write 'em out as quick as you can", although we
 don't guarantee that keys will be persistent on disk when the command
 completes.
 
-
 There are also a few options you want to tweak, if you want to use NDS for
 its ability to maintain only a subset of keys in memory:
 
@@ -118,7 +117,77 @@ There are a few commands that have been added to the redis command set:
   config file.
 
 There is also a new section in the `INFO` output, for NDS statistics.  It'll
-show up when you run `INFO`, and can be produced on its own with `INFO NDS`.
+show up when you run `INFO`, and can be produced on its own with `INFO NDS`. 
+It has the following keys:
+
+* `nds_enabled` (boolean) -- Whether or not NDS is enabled.
+
+* `nds_preload` (boolean) -- Whether or not the "preload" function of NDS
+  has been triggered (either at startup, by setting `nds-preload yes` in the
+  config file, or at runtime, by running `NDS PRELOAD`).
+
+* `nds_keycache` (boolean) -- Whether or not the NDS keycache feature was
+  enabled in the config file, with `nds-keycache yes`.
+
+* `nds_cache_hits` (integer) -- The number of times a request for a key was
+  satisfied out of memory.
+
+* `nds_cache_misses` (integer) -- The number of times NDS has had to go to
+  disk to satisfy a request for a key.
+
+* `nds_cache_hit_rate` (floating-point percentage) -- The percentage of
+  requests for keys that have been satisfied from memory.  Just an
+  easier-on-the-eyes version of the previous two metrics.
+
+* `nds_usec` (integer) -- The number of microseconds that have been spent in
+  "NDS overhead" since the server process was started.  As close as I can
+  make it, it is a measurement of how much extra time Redis has had to take
+  in order to use NDS, over and above the time that would have been spent
+  had NDS been disabled.
+
+* `nds_dirty_keys` (integer) -- The number of keys that have been
+  modified, but aren't yet in a background flush.  If this number gets
+  large, it indicates that NDS isn't able to keep up with the current rate
+  of changes.
+
+* `nds_flushing_keys` (integer) -- The number of keys that are currently
+  being flushed by a background process.  If this number keeps growing over
+  time, you're either failing flushes (see `nds_flush_failure`, below), or
+  NDS isn't keeping up with the rate of changes (in which case,
+  `nds_dirty_keys` should also be going up at the same rate).
+
+* `nds_flush_success` (integer) -- The number of successful flushes.  Not
+  generally very interesting in and of itself.
+
+* `nds_flush_failure` (integer) -- The number of flushes that have failed
+  for some reason.  If this number goes up over time, you've got a bit of a
+  problem.  If this number goes up and `nds_flush_success` *isn't*, then
+  you're not flushing keys to disk at all and you have a *major* problem.
+
+* `nds_preload_in_progress` (boolean) -- Are we currently preloading all
+  keys?  Should only be true (`1`) for a short period of time, and only on
+  startup (or after `NDS PRELOAD`).  If your system's running slowly all
+  of a sudden, and this is `1`, then someone's triggered the preload.
+
+* `nds_preload_complete` (boolean) -- Set to true (`1`) if the dataset has
+  been preloaded.  More informational than anything.
+
+* `nds_snapshot_pending` (boolean) -- Tells you if the system is waiting on
+  a flush to complete before a snapshot can be taken.  If you're using `NDS
+  SNAPSHOT` for backups, this key (and `nds_snapshot_in_progress`) should be
+  monitored so you know when the snapshot is complete.
+  
+* `nds_snapshot_in_progress` (boolean) -- True (`1`) if the current flush is
+  also taking a snapshot.
+
+* `nds_child_pid` (integer) -- The process ID of the child which is
+  currently performing NDS background tasks (flush to disk, snapshotting),
+  or `-1` if no child currently exists.  Useful for checking who belongs to
+  who, and also to see if NDS even *has* a background process running at
+  present.
+
+
+DITCHING NDS
 
 If you want to move away from NDS, here is the simplest way:
 
@@ -136,6 +205,66 @@ If you want to move away from NDS, here is the simplest way:
 You can reduce the amount of downtime by using AOF instead of RDB, too.
 
 
+NDS-SPECIFIC CONFIGURATION PARAMETERS
+
+There are a few new parameters which you can set in your redis.conf to
+enable and control the NDS system:
+
+* `nds` (boolean; default `no`) -- Whether or not NDS is actually enabled. 
+  If you're running the NDS patchset in the first place, then presumably you
+  usually want to set this to `yes`, however it is useful if you run huge
+  fleets of Rediises to have a single build for all instances, and not all
+  of them run NDS (the horror!), you can use this option to disable it.
+
+* `nds-watermark` (integer (with optional suffix); default `0`) -- If set to
+  a value greater than `0`, NDS will *try* to keep memory usage under this
+  many bytes.  Redis won't refuse writes if memory usage exceeds this value,
+  but it will immediately attempt to flush dirty keys, and will discard keys
+  from memory to return memory usage to below this point.
+  
+  This "high water mark" feature is very similar in concept to "soft" and
+  "hard" disk quotas.  By triggering a flush before we hit `maxmemory` (and
+  hence start denying writes), the system can try to clear out dirty keys
+  before it runs out of memory completely.  You should set `nds-watermark`
+  to an amount of memory that the system can comfortably accommodate
+  (including memory used by other processes, and a suitable disk cache),
+  while `maxmemory` should be set to a value which, if exceeded, would cause
+  system instability (OOM kills) or unacceptable performance degradation
+  (excessive swapping).
+
+* `nds-preload` (boolean; default `no`) -- Should we preload all data into
+  memory?  Preloading is a means of loading the full set of keys into memory
+  from disk on startup, whilst also servicing client requests.  This gives
+  you, in many ways, the best of both worlds.  You get the performance of a
+  fully in-memory data set, with quick startup and frequent persistence to
+  disk.  On the downside, you will need to have enough memory to store your
+  entire dataset, or preloading won't be particularly effective.
+
+* `nds-keycache` (boolean; default `no`) -- Should we cache the names of all
+  keys that are on disk in memory?  By default, when a command is run on a
+  key that doesn't exist *at all*, (say pushing to an empty list, or a GET
+  on a non-existent key) NDS has to go to disk to satisfy itself that they
+  key doesn't exist.  This read from disk slows down request rates, as it's
+  done synchronously (it blocks all other requests in the queue).  Thus, in
+  a database that sees a lot of operations on non-existent keys (such as a
+  use case that uses the existence or otherwise of a key as useful
+  information) performance can slow to a crawl as NDS continually looks to
+  disk for keys that aren't expected to even exist.
+  
+  In this situation, the "keycache" can be a huge performance benefit.  The
+  way it works is simple: all key *names* are read off disk at startup, and
+  kept in memory.  Whenever the set of keys on disk changes, the list in
+  memory is updated.  Thus, instead of having to go to disk to answer the
+  question, "does this key exist?", we can just check memory.  The downside
+  of this is twofold:
+  
+  * Slightly slower startup (it isn't too bad, since reading just the key
+    names off disk is pretty quick); and
+  
+  * The memory usage of storing *every* key name in memory can become
+    significant when dealing with particularly large datasets.
+  
+
 TODO
 
 NDS is very new, and shouldn't be relied upon for anything really important. 
@@ -147,12 +276,10 @@ now.
 Here are the list of things that are known deficiencies in the code, as
 compared to "stock" Redis:
 
-* Keys can be no longer than 511 octets in length.  This is a limitation in
-  MDB, and isn't something that can be easily extended.  At present, keys
-  longer than this limit will be stored in memory and can be manipulated,
-  but won't be persisted to disk and hence will be lost across a restart. 
-  I'd like for Redis to return an error on an attempt to manipulate such a
-  long key, but it isn't trivial.
+* Keys must be between 1 and 511 octets in length, inclusive.  This is a
+  limitation in MDB, and isn't something that can be easily extended.  If
+  you attempt to set a key outside of these limits, Redis will return an
+  error.
 
 And here are features that might be useful to implement, but aren't bugs as
 such:
