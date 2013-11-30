@@ -263,7 +263,56 @@ enable and control the NDS system:
   
   * The memory usage of storing *every* key name in memory can become
     significant when dealing with particularly large datasets.
-  
+
+
+THEORY OF OPERATION
+
+If you're interested in the "inner workings" of NDS, but don't particularly
+want to grovel through the code, here's how it works.
+
+Every time a key is needed by Redis, it typically looks that key up in a
+dictionary in-memory.  NDS hooks into this code path (`db.c:lookupKey`) and
+if the key was not found in memory, it tries to lookup the key on disk (a
+LightningDB file) and, if the key exists there, it is deserialised, loaded
+into memory, and the operation continues as though nothing toward ever
+happened.
+
+Conversely, when a key is modified, NDS remembers the key that was
+modified.  When enough modifications have taken place, a "flush" is
+triggered.  NDS uses the same logic to decide whether to perform a flush as
+Redis uses to decide if an RDB snapshot should be taken -- a count of the
+number of change operations performed on the keyspace.  It's important to
+remember that the change count which is used to decide whether to flush is
+not the same as the number of keys changed.  If you `SET` the same key 50
+times, that'll count as 50 changes to the "should I flush?" logic, but will
+only cause one write to one key on flush.
+
+A flush is performed by forking the Redis server, and while the parent gets
+on with the job of serving requests, the child process goes through the list
+of modified keys (which Redis has been keeping track of) and writes them to
+disk.  One of the nice features of LightningDB is that writers don't block
+readers (and vice versa) so there's no issues with blocking and performance
+problems there.
+
+To keep memory usage under control, the standard key eviction code in Redis
+is used (with some modifications to discard keys a little more sensibly). 
+When deciding which key to evict, the standard policy rules are used
+(`allkeys-lru` is the *strongly* recommended value for `maxmemory-policy`;
+it's the only one I test against).  In this algorithm, a random key is
+chosen a number of times, and the key which hasn't been touched (either read
+*or* written) in the longest time is evicted.  "Dirty" keys (that is, those
+that may not exist safely on disk yet, due either to not having been flushed
+yet, or being flushed by a child that hasn't returned yet) are immune from
+eviction (otherwise you'd have data loss city).
+
+In some pathological cases (involving either a far-too-small `maxmemory`, or
+too many different keys being modified in a short period), the volume of
+dirty keys may result in *all* clean keys being pushed out.  In this case,
+Redis will (quite rightly) freak out and refuse to accept writes.  As soon
+as a flush completes, all of the keys which were being flushed will be
+marked as clean again, and will start being thrown out to reduce memory
+pressure, allowing writes to flow once more.
+
 
 TODO
 
