@@ -292,7 +292,10 @@ on with the job of serving requests, the child process goes through the list
 of modified keys (which Redis has been keeping track of) and writes them to
 disk.  One of the nice features of LightningDB is that writers don't block
 readers (and vice versa) so there's no issues with blocking and performance
-problems there.
+problems there.  Values are serialised using the same routines as are used
+to write values to RDB files; in particular, all data is compressed, and a
+checksum calculated, when being written, and the checksum verified on
+deserialisation.
 
 To keep memory usage under control, the standard key eviction code in Redis
 is used (with some modifications to discard keys a little more sensibly). 
