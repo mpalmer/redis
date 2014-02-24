@@ -797,6 +797,7 @@ int rdbSaveBackground(char *filename) {
 
     preforkNDS();
     start = ustime();
+    preforkNDS();
     if ((childpid = fork()) == 0) {
         int retval;
 
