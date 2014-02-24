@@ -1,3 +1,10 @@
+redis (2:2.6.16-0anchor8) squeeze wheezy; urgency=low
+
+  * Remove possibility of buggy freeMemoryIfNeeded causing problems when
+    not running in NDS mode.
+
+ -- Matt Palmer <mpalmer@debian.org>  Tue, 25 Feb 2014 10:29:48 +1100
+
 redis (2:2.6.16-0anchor7) squeeze wheezy; urgency=low
 
   * New MDB release.  Hopefully it'll help with some of the corruption
