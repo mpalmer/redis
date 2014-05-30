@@ -17,3 +17,8 @@ Description: Persistent key-value database with network interface
  manipulating and querying data structures such as lists and sets.
  .
  The dataset is stored entirely in memory and periodically flushed to disk.
+
+Package: redis-dbg
+Architecture: any
+Depends: redis-server (= ${binary:Version}), ${misc:Depends}
+Description: debugging symbols for redis
