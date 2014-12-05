@@ -257,7 +257,7 @@ static void cache_key(redisDb *db, sds key) {
     }
     
     if (not_in_keycache(db, key)) {
-        dictAdd(db->nds_keys, key, NULL);
+        dictAdd(db->nds_keys, sdsdup(key), NULL);
     }
 }
 
