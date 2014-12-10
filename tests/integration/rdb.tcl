@@ -3,7 +3,7 @@ set server_path [tmpdir "server.rdb-encoding-test"]
 # Copy RDB with different encodings in server path
 exec cp tests/assets/encodings.rdb $server_path
 
-start_server [list overrides [list "dir" $server_path "dbfilename" "encodings.rdb"]] {
+start_server [list overrides [list "dir" $server_path "dbfilename" "encodings.rdb" "nds" "no"]] {
   test "RDB encoding loading test" {
     r select 0
     csvdump r
@@ -25,7 +25,7 @@ start_server [list overrides [list "dir" $server_path "dbfilename" "encodings.rd
 
 set server_path [tmpdir "server.rdb-startup-test"]
 
-start_server [list overrides [list "dir" $server_path]] {
+start_server [list overrides [list "dir" $server_path "nds" "no"]] {
     test {Server started empty with non-existing RDB file} {
         r debug digest
     } {0000000000000000000000000000000000000000}
@@ -33,7 +33,7 @@ start_server [list overrides [list "dir" $server_path]] {
     r save
 }
 
-start_server [list overrides [list "dir" $server_path]] {
+start_server [list overrides [list "dir" $server_path "nds" "no"]] {
     test {Server started empty with empty RDB file} {
         r debug digest
     } {0000000000000000000000000000000000000000}
@@ -62,7 +62,7 @@ catch {
 
 # Now make sure the server aborted with an error
 if {!$isroot} {
-    start_server_and_kill_it [list "dir" $server_path] {
+    start_server_and_kill_it [list "dir" $server_path "nds" "no"] {
         test {Server should not start if RDB file can't be open} {
             wait_for_condition 50 100 {
                 [string match {*Fatal error loading*} \
@@ -86,7 +86,7 @@ puts -nonewline $fd "foobar00"; # Corrupt the checksum
 close $fd
 
 # Now make sure the server aborted with an error
-start_server_and_kill_it [list "dir" $server_path] {
+start_server_and_kill_it [list "dir" $server_path "nds" "no"] {
     test {Server should not start if RDB is corrupted} {
         wait_for_condition 50 100 {
             [string match {*RDB checksum*} \

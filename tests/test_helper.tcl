@@ -38,13 +38,13 @@ set ::all_tests {
     unit/pubsub
     unit/slowlog
     unit/scripting
-    unit/maxmemory
     unit/introspection
     unit/limits
     unit/obuf-limits
     unit/dump
     unit/bitops
 }
+#unit/maxmemory
 # Index to the next test to run in the ::all_tests list.
 set ::next_test 0
 

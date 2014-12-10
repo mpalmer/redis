@@ -1922,6 +1922,7 @@ int prepareForShutdown(int flags) {
     }
     if (server.nds) {
         redisLog(REDIS_NOTICE, "Flushing dirty keys to NDS before exiting.");
+        // FIXME What if background flush is running?
         flushDirtyKeys();
     } else {
         if ((server.saveparamslen > 0 && !nosave) || save) {
@@ -2579,7 +2580,7 @@ int freeMemoryIfNeededNDS(void) {
             }
             if (dictSize(dict) == 0) {
                 redisLog(REDIS_DEBUG, "Database %i is empty while trying to find a random key to evict", bestdb);
-                bestdb = -1;
+                continue;
             } else {
                 struct dictEntry *de = dictGetRandomKey(dict);
                 bestkey = dictGetKey(de);

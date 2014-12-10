@@ -830,6 +830,52 @@ int rewriteHashObject(rio *r, robj *key, robj *o) {
     return 1;
 }
 
+int aofRewriteIterator(void *data, robj *key) {
+    rioSaveIterData *idata = (rioSaveIterData *)data;
+    long long expiretime = -1;
+    robj *o = lookupKeyRaw(idata->db, key, &expiretime);
+    rio* aof = idata->io;
+
+    /* If this key is already expired skip it */
+    if (expiretime != -1 && expiretime < idata->now) {
+        return REDIS_OK;
+    }
+
+    /* Save the key and associated value */
+    if (o->type == REDIS_STRING) {
+        /* Emit a SET command */
+        char cmd[]="*3\r\n$3\r\nSET\r\n";
+        if (rioWrite(aof,cmd,sizeof(cmd)-1) == 0) goto werr;
+        /* Key and value */
+        if (rioWriteBulkObject(aof,key) == 0) goto werr;
+        if (rioWriteBulkObject(aof,o) == 0) goto werr;
+    } else if (o->type == REDIS_LIST) {
+        if (rewriteListObject(aof,key,o) == 0) goto werr;
+    } else if (o->type == REDIS_SET) {
+        if (rewriteSetObject(aof,key,o) == 0) goto werr;
+    } else if (o->type == REDIS_ZSET) {
+        if (rewriteSortedSetObject(aof,key,o) == 0) goto werr;
+    } else if (o->type == REDIS_HASH) {
+        if (rewriteHashObject(aof,key,o) == 0) goto werr;
+    } else {
+        redisPanic("Unknown object type");
+    }
+    /* Save the expire time */
+    if (expiretime != -1) {
+        char cmd[]="*3\r\n$9\r\nPEXPIREAT\r\n";
+        if (rioWrite(aof,cmd,sizeof(cmd)-1) == 0) goto werr;
+        if (rioWriteBulkObject(aof,key) == 0) goto werr;
+        if (rioWriteBulkLongLong(aof,expiretime) == 0) goto werr;
+    }
+
+    decrRefCount(o);
+    return REDIS_OK;
+
+werr:
+    decrRefCount(o);
+    return REDIS_ERR;
+}
+
 /* Write a sequence of commands able to fully rebuild the dataset into
  * "filename". Used both by REWRITEAOF and BGREWRITEAOF.
  *
@@ -846,6 +892,14 @@ int rewriteAppendOnlyFile(char *filename) {
     int j;
     long long now = mstime();
 
+    if (server.nds) {
+        // FIXME What if background flush is running?
+        if (flushDirtyKeys() != REDIS_OK) {
+            redisLog(REDIS_WARNING, "rewriteAppendOnlyFile faied cause flush dirty keys.");
+            return REDIS_ERR;
+        }
+    }
+
     /* Note that we have to use a different temp name here compared to the
      * one used by rewriteAppendOnlyFileBackground() function. */
     snprintf(tmpfile,256,"temp-rewriteaof-%d.aof", (int) getpid());
@@ -859,64 +913,50 @@ int rewriteAppendOnlyFile(char *filename) {
     if (server.aof_rewrite_incremental_fsync)
         rioSetAutoSync(&aof,REDIS_AOF_AUTOSYNC_BYTES);
     for (j = 0; j < server.dbnum; j++) {
+        rioSaveIterData idata;
+        dict *d;
+
+        idata.db = server.db+j;
+        idata.now = now;
+        idata.io = &aof;
+        
+        d = idata.db->dict;
+
         char selectcmd[] = "*2\r\n$6\r\nSELECT\r\n";
-        redisDb *db = server.db+j;
-        dict *d = db->dict;
-        if (dictSize(d) == 0) continue;
-        di = dictGetSafeIterator(d);
-        if (!di) {
-            fclose(fp);
-            return REDIS_ERR;
-        }
 
         /* SELECT the new DB */
         if (rioWrite(&aof,selectcmd,sizeof(selectcmd)-1) == 0) goto werr;
         if (rioWriteBulkLongLong(&aof,j) == 0) goto werr;
 
-        /* Iterate this DB writing every entry */
-        while((de = dictNext(di)) != NULL) {
-            sds keystr;
-            robj key, *o;
-            long long expiretime;
-
-            keystr = dictGetKey(de);
-            o = dictGetVal(de);
-            initStaticStringObject(key,keystr);
-
-            expiretime = getExpire(db,&key);
-
-            /* If this key is already expired skip it */
-            if (expiretime != -1 && expiretime < now) continue;
-
-            /* Save the key and associated value */
-            if (o->type == REDIS_STRING) {
-                /* Emit a SET command */
-                char cmd[]="*3\r\n$3\r\nSET\r\n";
-                if (rioWrite(&aof,cmd,sizeof(cmd)-1) == 0) goto werr;
-                /* Key and value */
-                if (rioWriteBulkObject(&aof,&key) == 0) goto werr;
-                if (rioWriteBulkObject(&aof,o) == 0) goto werr;
-            } else if (o->type == REDIS_LIST) {
-                if (rewriteListObject(&aof,&key,o) == 0) goto werr;
-            } else if (o->type == REDIS_SET) {
-                if (rewriteSetObject(&aof,&key,o) == 0) goto werr;
-            } else if (o->type == REDIS_ZSET) {
-                if (rewriteSortedSetObject(&aof,&key,o) == 0) goto werr;
-            } else if (o->type == REDIS_HASH) {
-                if (rewriteHashObject(&aof,&key,o) == 0) goto werr;
-            } else {
-                redisPanic("Unknown object type");
-            }
-            /* Save the expire time */
-            if (expiretime != -1) {
-                char cmd[]="*3\r\n$9\r\nPEXPIREAT\r\n";
-                if (rioWrite(&aof,cmd,sizeof(cmd)-1) == 0) goto werr;
-                if (rioWriteBulkObject(&aof,&key) == 0) goto werr;
-                if (rioWriteBulkLongLong(&aof,expiretime) == 0) goto werr;
+        if (server.nds) {
+            if (walkNDS(idata.db, aofRewriteIterator, &idata, -1) == REDIS_ERR) {
+                redisLog(REDIS_WARNING, "walkNDS failed");
+                goto werr;
             }
         }
-        dictReleaseIterator(di);
+        else {
+            di = dictGetSafeIterator(d);
+            if (!di) {
+                fclose(fp);
+                return REDIS_ERR;
+            }
+
+            /* Iterate this DB writing every entry */
+            while((de = dictNext(di)) != NULL) {
+                sds keystr = dictGetKey(de);;
+                robj key;
+
+                initStaticStringObject(key,keystr);
+                if (aofRewriteIterator(&idata, &key) == REDIS_ERR) {
+                    redisLog(REDIS_WARNING, "aofSaveIterator failed");
+                    goto werr;
+                }
+            }
+            dictReleaseIterator(di);
+        }
+
     }
+    di = NULL; /* So that we don't release it again on error. */
 
     /* Make sure data will not remain on the OS's output buffers */
     fflush(fp);

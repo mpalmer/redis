@@ -41,7 +41,8 @@
 #include "redis.h"
 
 void   preforkNDS(void);
-robj  *getNDS(redisDb *db, robj *key);
+robj *getNDS(redisDb *db, robj *key);
+robj *getNDSRaw(redisDb *db, robj *key, long long *expire);
 int    existsNDS(redisDb *db, robj *key);
 size_t keyCountNDS(redisDb *db);
 int    emptyNDS(redisDb *db);

@@ -26,7 +26,7 @@ start_server {tags {"repl"}} {
         } {slave}
 
         test {Test replication with parallel clients writing in differnet DBs} {
-            after 5000
+            after 8000
             stop_bg_complex_data $load_handle0
             stop_bg_complex_data $load_handle1
             stop_bg_complex_data $load_handle2

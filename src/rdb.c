@@ -628,16 +628,18 @@ int rdbSaveKeyValuePair(rio *rdb, robj *key, robj *val,
 }
 
 int rdbSaveIterator(void *data, robj *key) {
-    rdbSaveIterData *idata = (rdbSaveIterData *)data;
-    long long expire = getExpire(idata->db, key);
-    robj *val = lookupKey(idata->db, key);
+    rioSaveIterData *idata = (rioSaveIterData *)data;
+    long long expire = -1;
+    robj *val = lookupKeyRaw(idata->db, key, &expire);
     int rv = 0;
     
-    if (rdbSaveKeyValuePair(idata->rdb, key, val, expire, idata->now) == -1) {
+    if (rdbSaveKeyValuePair(idata->io, key, val, expire, idata->now) == -1) {
     	rv = REDIS_ERR;
     } else {
     	rv = REDIS_OK;
     }
+
+    decrRefCount(val);
     
     return rv;
 }
@@ -654,6 +656,14 @@ int rdbSave(char *filename) {
     rio rdb;
     uint64_t cksum;
 
+    if (server.nds) {
+        // FIXME What if background flush is running?
+        if (flushDirtyKeys() != REDIS_OK) {
+            redisLog(REDIS_WARNING, "rdbSave faied cause flush dirty keys.");
+            return REDIS_ERR;
+        }
+    }
+
     snprintf(tmpfile,256,"temp-%d.rdb", (int) getpid());
     fp = fopen(tmpfile,"w");
     if (!fp) {
@@ -669,12 +679,12 @@ int rdbSave(char *filename) {
     if (rdbWriteRaw(&rdb,magic,9) == -1) goto werr;
 
     for (j = 0; j < server.dbnum; j++) {
-        rdbSaveIterData idata;
+        rioSaveIterData idata;
         dict *d;
 
         idata.db = server.db+j;
         idata.now = now;
-        idata.rdb = &rdb;
+        idata.io = &rdb;
         
         d = idata.db->dict;
 

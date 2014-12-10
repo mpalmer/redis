@@ -50,6 +50,8 @@
 #define NDS_TIMER_START unsigned long long start = ustime();
 #define NDS_TIMER_END server.stat_nds_usec += ustime()-start;
 
+#define min(a, b)	(a) < (b) ? a : b
+
 /* Generate the name of the freezer we want, based on the database passed
  * in, and stuff the name into buf. */
 static void freezer_filename(redisDb *db, char *buf) {
@@ -170,6 +172,10 @@ static NDSDB *nds_open(redisDb *db, int writer) {
         /* Ensure the mapsize is a multiple of the page size, because
          * grumble grumble */
         mapsize = (mapsize / sysconf(_SC_PAGESIZE)) * sysconf(_SC_PAGESIZE);
+#if ((ULONG_MAX) == (UINT_MAX))
+        // can't exceed 2G on 32bit system.
+        mapsize = min(mapsize, 2147483648);
+#endif
         
         redisLog(REDIS_DEBUG, "Setting mapsize to %llu", mapsize);
                     
@@ -257,7 +263,7 @@ static void cache_key(redisDb *db, sds key) {
     }
     
     if (not_in_keycache(db, key)) {
-        dictAdd(db->nds_keys, key, NULL);
+        dictAdd(db->nds_keys, sdsdup(key), NULL);
     }
 }
 
@@ -446,19 +452,21 @@ void preforkNDS(void) {
     server.ndsdb.env = NULL;
 }
 
-robj *getNDS(redisDb *db, robj *key) {
+robj *getNDSRaw(redisDb *db, robj *key, long long *expire) {
     sds val = NULL;
     rio payload;
     int type;
     robj *obj = NULL;
     NDSDB *ndsdb = nds_open(db, 0);
-    NDS_TIMER_START;
+    *expire = -1;
     
     redisLog(REDIS_DEBUG, "Looking up %s in NDS", (char *)key->ptr);
 
     if (!ndsdb) {
         return NULL;
     }
+
+    NDS_TIMER_START;
     
     val = nds_get(ndsdb, key->ptr);
     
@@ -478,13 +486,8 @@ robj *getNDS(redisDb *db, robj *key) {
         }
         
         if (obj) {
-            sds copy = sdsdup(key->ptr);
-            redisAssertWithInfo(NULL, key, dictAdd(db->dict, copy, obj) == REDIS_OK);
-            
             if (rdbLoadType(&payload) == REDIS_RDB_OPCODE_EXPIRETIME_MS) {
-                long long expire = rdbLoadMillisecondTime(&payload);
-                redisLog(REDIS_DEBUG, "Setting expiry time to %lld", expire);
-                setExpire(db, key, expire);
+                *expire = rdbLoadMillisecondTime(&payload);
             }
         }
     }
@@ -494,6 +497,22 @@ nds_cleanup:
         sdsfree(val);
     }
     NDS_TIMER_END;
+    return obj;
+}
+
+robj *getNDS(redisDb *db, robj *key) {
+    long long expire = -1;
+    robj *obj = getNDSRaw(db, key, &expire);
+
+    if (obj) {
+        sds copy = sdsdup(key->ptr);
+        redisAssertWithInfo(NULL, key, dictAdd(db->dict, copy, obj) == REDIS_OK);
+        
+        if (expire != -1) {
+            redisLog(REDIS_DEBUG, "Setting expiry time to %lld", expire);
+            setExpire(db, key, expire);
+        }
+    }
     return obj;
 }
 
@@ -535,6 +554,11 @@ int emptyNDS(redisDb *db) {
     redisLog(REDIS_DEBUG, "emptyNDS(db=%i) => REDIS_OK", db->id);
     nds_close(ndsdb);
     NDS_TIMER_END;
+
+    dictEmpty(db->dirty_keys);
+    dictEmpty(db->flushing_keys);
+    dictEmpty(db->nds_keys);
+
     return REDIS_OK;
 }
 
@@ -804,12 +828,12 @@ int backgroundDirtyKeysFlush(void) {
 }
 
 int flushDirtyKeys(void) {
+    dictIterator *di = NULL;
     NDS_TIMER_START;
     
     redisLog(REDIS_DEBUG, "Flushing dirty keys");
     for (int j = 0; j < server.dbnum; j++) {
         redisDb *db = server.db+j;
-        dictIterator *di;
         dictEntry *deKey, *deVal;
         NDSDB *ndsdb;
 
@@ -817,16 +841,19 @@ int flushDirtyKeys(void) {
         
         if (dictSize(db->dirty_keys) == 0) continue;
 
+        if (di) {
+            dictReleaseIterator(di);
+        }
         di = dictGetSafeIterator(db->dirty_keys);
         if (!di) {
             redisLog(REDIS_WARNING, "dictGetSafeIterator failed");
-            return REDIS_ERR;
+            goto werr;
         }
 
         ndsdb = nds_open(db, 1);        
 
         if (!ndsdb) {
-            return REDIS_ERR;
+            goto werr;
         }
         
         while ((deKey = dictNext(di)) != NULL) {
@@ -843,8 +870,7 @@ int flushDirtyKeys(void) {
                 redisLog(REDIS_DEBUG, "Deleting key '%s' from NDS", keystr);
                 if (nds_del(ndsdb, keystr) == -1) {
                     redisLog(REDIS_WARNING, "nds_del returned error, flush failed");
-                    NDS_TIMER_END;
-                    return REDIS_ERR;
+                    goto werr;
                 }
             } else {
                 rio payload;
@@ -866,7 +892,7 @@ int flushDirtyKeys(void) {
                 if (nds_set(ndsdb, keystr, payload.io.buffer.ptr) == REDIS_ERR) {
                     redisLog(REDIS_WARNING, "nds_set returned error, flush failed");
                     sdsfree(payload.io.buffer.ptr);
-                    return REDIS_ERR;
+                    goto werr;
                 }
                 sdsfree(payload.io.buffer.ptr);
             }
@@ -903,6 +929,12 @@ int flushDirtyKeys(void) {
     
     NDS_TIMER_END;
     return REDIS_OK;
+
+werr:
+    NDS_TIMER_END;
+    if(di)
+        dictReleaseIterator(di);
+    return REDIS_ERR;
 }
 
 void postNDSFlushCleanup(void) {
@@ -919,7 +951,7 @@ void postNDSFlushCleanup(void) {
 void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
     NDS_TIMER_START;
     
-    redisLog(REDIS_NOTICE, "NDS background save completed.  exitcode=%i, bysignal=%i", exitcode, bysignal);
+    redisLog(REDIS_DEBUG, "NDS background save completed.  exitcode=%i, bysignal=%i", exitcode, bysignal);
 
     server.nds_snapshot_in_progress = 0;
 
@@ -954,6 +986,7 @@ void backgroundNDSFlushDoneHandler(int exitcode, int bysignal) {
                 dictAdd(db->dirty_keys, sdsdup(dictGetKey(de)), NULL);
             }
             
+            dictReleaseIterator(di);
             dictEmpty(db->flushing_keys);
         }
         
@@ -1063,8 +1096,6 @@ void ndsMemkeysCommand(redisClient *c) {
     dictEntry *de;
     int numkeys = 0;
     
-    di = dictGetSafeIterator(c->db->dict);
-    
     while ((de = dictNext(di)) != NULL) {
         sds key = dictGetKey(de);
         robj *keyobj = createStringObject(key, sdslen(key));
@@ -1073,6 +1104,7 @@ void ndsMemkeysCommand(redisClient *c) {
         decrRefCount(keyobj);
         numkeys++;
     }
+    dictReleaseIterator(di);
     setDeferredMultiBulkLength(c, rlen, numkeys);
 }
 

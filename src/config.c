@@ -522,10 +522,24 @@ void configSetCommand(redisClient *c) {
         if (getLongLongFromObject(o,&ll) == REDIS_ERR ||
             ll < 0) goto badfmt;
         server.maxmemory = ll;
+        if (server.nds && server.nds_watermark && server.nds_watermark >= server.maxmemory) {
+            server.nds_watermark = server.maxmemory - 1;
+        }
         if (server.maxmemory) {
             if (server.maxmemory < zmalloc_used_memory()) {
                 redisLog(REDIS_WARNING,"WARNING: the new maxmemory value set via CONFIG SET is smaller than the current memory usage. This will result in keys eviction and/or inability to accept new write commands depending on the maxmemory-policy.");
             }
+            freeMemoryIfNeeded();
+        }
+    } else if (!strcasecmp(c->argv[2]->ptr,"nds-watermark")) {
+        if (getLongLongFromObject(o,&ll) == REDIS_ERR ||
+            ll < 0) goto badfmt;
+        if (ll >= server.maxmemory) {
+            addReplyErrorFormat(c,"nds-watermark must be less than maxmemory");
+            return;
+        }
+        server.nds_watermark = ll;
+        if (server.nds_watermark && server.nds) {
             freeMemoryIfNeeded();
         }
     } else if (!strcasecmp(c->argv[2]->ptr,"hz")) {

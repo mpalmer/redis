@@ -1070,6 +1070,7 @@ int expireIfNeeded(redisDb *db, robj *key);
 long long getExpire(redisDb *db, robj *key);
 void setExpire(redisDb *db, robj *key, long long when);
 robj *lookupKey(redisDb *db, robj *key);
+robj *lookupKeyRaw(redisDb *db, robj *key, long long *expire);
 robj *lookupKeyRead(redisDb *db, robj *key);
 robj *lookupKeyWrite(redisDb *db, robj *key);
 robj *lookupKeyReadOrReply(redisClient *c, robj *key, robj *reply);
@@ -1283,5 +1284,11 @@ void redisLogHexDump(int level, char *descr, void *value, size_t len);
     printf("DEBUG %s:%d > " fmt "\n", __FILE__, __LINE__, __VA_ARGS__)
 #define redisDebugMark() \
     printf("-- MARK %s:%d --\n", __FILE__, __LINE__)
+
+typedef struct {
+    redisDb *db;
+    rio *io;
+    long long now;
+} rioSaveIterData;
 
 #endif

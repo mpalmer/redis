@@ -112,12 +112,6 @@ long long rdbLoadMillisecondTime(rio *rdb);
 void backgroundSaveDoneHandler(int exitcode, int bysignal);
 int rdbSaveKeyValuePair(rio *rdb, robj *key, robj *val, long long expiretime, long long now);
 robj *rdbLoadStringObject(rio *rdb);
-
-typedef struct {
-    redisDb *db;
-    rio *rdb;
-    long long now;
-} rdbSaveIterData;
     
 
 #endif

@@ -616,21 +616,27 @@ void setExpire(redisDb *db, robj *key, long long when) {
  * is associated with this key (i.e. the key is non volatile) */
 long long getExpire(redisDb *db, robj *key) {
     dictEntry *de;
+    long long expire = -1;
+    robj *val = NULL;
 
-    if (server.nds) {
-        /* Need to ensure the key's loaded before we can check whether its
-         * expired */
-        loadKey(db, key);
+    if (dictFind(db->dict, key->ptr)) {
+        if (dictSize(db->expires) == 0 ||
+           (de = dictFind(db->expires,key->ptr)) == NULL)
+            /* No expire? return ASAP */
+            return -1;
+
+        /* The entry was found in the expire dict, this means it should also
+         * be present in the main dict (safety check). */
+        return dictGetSignedIntegerVal(de);
     }
-
-    /* No expire? return ASAP */
-    if (dictSize(db->expires) == 0 ||
-       (de = dictFind(db->expires,key->ptr)) == NULL) return -1;
-
-    /* The entry was found in the expire dict, this means it should also
-     * be present in the main dict (safety check). */
-    redisAssertWithInfo(NULL,key,dictFind(db->dict,key->ptr) != NULL);
-    return dictGetSignedIntegerVal(de);
+    else if (server.nds) {
+        val = getNDSRaw(db, key, &expire);
+        if (val) {
+            decrRefCount(val);
+        }
+        return expire;
+    }
+    return -1;
 }
 
 /* Propagate expires into slaves and the AOF file.
@@ -897,4 +903,31 @@ int *zunionInterGetKeys(struct redisCommand *cmd,robj **argv, int argc, int *num
     for (i = 0; i < num; i++) keys[i] = 3+i;
     *numkeys = num;
     return keys;
+}
+
+robj *lookupKeyRaw(redisDb *db, robj *key, long long *expire) {
+    robj *val = NULL;
+    dictEntry *de = dictFind(db->dict,key->ptr);
+    dictEntry *de1 = NULL;
+    
+    if (de) {
+        if (dictSize(db->expires) == 0 ||
+           (de1 = dictFind(db->expires,key->ptr)) == NULL) {
+            *expire = -1;
+        }
+        else {
+            *expire = dictGetSignedIntegerVal(de1);
+        }
+        val = dictGetVal(de);
+        incrRefCount(val);
+        return val;
+    }
+    else if (server.nds) {
+        return getNDSRaw(db, key, expire);
+    }
+    else {
+        *expire = -1;
+        return NULL;
+    }
+
 }
